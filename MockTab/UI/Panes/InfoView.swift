@@ -540,12 +540,16 @@ struct InfoView: View {
     /// the user could copy anything. Called explicitly by `refresh()` and
     /// cached in `diagnosticSnapshot`, so the displayed text only changes
     /// when the user asks for it.
+    private static let diagnosticDateFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return fmt
+    }()
+
     private func buildDiagnosticText() -> String {
         var lines: [String] = []
 
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        lines += [String(localized: "Generated : \(fmt.string(from: Date()))", comment: "Diagnostic: timestamp when info was generated")]
+        lines += [String(localized: "Generated : \(Self.diagnosticDateFormatter.string(from: Date()))", comment: "Diagnostic: timestamp when info was generated")]
 
         let ver =
             Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"

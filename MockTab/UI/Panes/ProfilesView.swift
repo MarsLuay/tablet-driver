@@ -369,19 +369,22 @@ struct ProfilesView: View {
         }
 
         private var defaultFilename: String {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyy-MM-dd"
-            return "MockTab-\(fmt.string(from: Date())).json"
+            return "MockTab-\(ProfilesView.exportDateFormatter.string(from: Date())).json"
         }
     }
+
+    private static let exportDateFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
+        return fmt
+    }()
 
     private func saveExportToFile() {
         let exporter = PresetExporter(registry: registry, tabletManager: tabletManager)
         guard let data = exporter.export() else { return }
         let panel = NSSavePanel()
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd"
-        panel.nameFieldStringValue = "MockTab-\(fmt.string(from: Date())).json"
+        panel.nameFieldStringValue = "MockTab-\(ProfilesView.exportDateFormatter.string(from: Date())).json"
         panel.allowedContentTypes = [.json]
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }

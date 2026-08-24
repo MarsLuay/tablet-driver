@@ -519,7 +519,6 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         // and window state.
         if let domain = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: domain)
-            UserDefaults.standard.synchronize()
         }
 
         // Also clear NSWindow autosave caches for window frames.  These are stored
@@ -784,6 +783,13 @@ final class AppMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Configuration import / export / reveal
 
+    private static let exportDateFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
+        return fmt
+    }()
+
     @objc private func menuImportConfiguration() {
         SettingsWindowManager.shared.showTab(.profiles)
         let panel = NSOpenPanel()
@@ -809,9 +815,7 @@ final class AppMenuController: NSObject, NSMenuDelegate {
             tabletManager: TabletManager.shared)
         guard let data = exporter.export() else { return }
         let panel = NSSavePanel()
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd"
-        panel.nameFieldStringValue = "MockTab-\(fmt.string(from: Date())).json"
+        panel.nameFieldStringValue = "MockTab-\(Self.exportDateFormatter.string(from: Date())).json"
         panel.allowedContentTypes = [.json]
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }

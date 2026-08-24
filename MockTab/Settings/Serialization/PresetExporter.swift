@@ -8,6 +8,8 @@ import CoreGraphics
 /// Serializes tablet profiles and settings to JSON for backup/restore.
 @MainActor
 final class PresetExporter {
+    static let iso = ISO8601DateFormatter()
+
     let registry: DeviceRegistry
     let tabletManager: TabletManager
 
@@ -19,10 +21,9 @@ final class PresetExporter {
     /// Builds a complete JSON backup of all known tablets and their settings.
     func export() -> Data? {
         let tablets = registry.knownTablets.map { exportTablet($0) }
-        let iso = ISO8601DateFormatter()
         let envelope: [String: Any] = [
             "version": 2,
-            "exportedAt": iso.string(from: Date()),
+            "exportedAt": Self.iso.string(from: Date()),
             "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
             "tablets": tablets
         ]

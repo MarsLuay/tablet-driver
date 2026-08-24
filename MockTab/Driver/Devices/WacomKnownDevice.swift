@@ -917,10 +917,6 @@ final class WacomKnownDevice: TabletDevice {
     func setTouchEnabled(_ enabled: Bool) {
         guard deviceSpec.hasFingerTouch else { return }
         logger.info("\(self.deviceSpec.name, privacy: .public): setTouchEnabled(\(enabled, privacy: .public)) requested — hardware feature-report unverified, in-app touchEnabled gate is authoritative")
-        // var payload: [UInt8] = [0x0A, 0x00, 0x00, 0x00, enabled ? 0x01 : 0x00]
-        // hidSetReport(device, reportID: CFIndex(0x0A), bytes: &payload,
-        //              tag: "\(deviceSpec.name) touchEnabled=\(enabled)",
-        //              severity: .bestEffort, log: logger)
     }
 
     /// Register the companion LED controller interface for this device.

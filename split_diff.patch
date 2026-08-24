@@ -1,0 +1,768 @@
+--- MockTab/Driver/Injection/InputInjector+PenInjection.swift	2023-10-24 10:00:00.000000000 -0400
++++ MockTab/Driver/Injection/InputInjector+PenInjection.swift	2023-10-24 10:00:00.000000000 -0400
+@@ -10,323 +10,48 @@
+     func inject(point: TabletPoint, settings: TabletSettings?) {
+         rearmWatchdog()
+-        // The snapshot is seeded synchronously in DeviceContext.observeInjectionSnapshot()
+-        // before any HID report can arrive, so this guard is defense-in-depth.
+         guard let snap = injectionSnapshot else { return }
+         let tool = snap.activeTool
+         var point = point
+-        if snap.invertRotation && point.rotation != 0.0 {
+-            point.rotation = (360.0 - point.rotation).truncatingRemainder(dividingBy: 360.0)
+-        }
+-        let rawPoint: CGPoint
+-        if snap.relativeCursorMovement {
+-            if point.inProximity {
+-                rawPoint = displayMapper.resolveRelativePoint(
+-                    point, snapshot: snap, currentCursorPosition: currentCursorPosition(),
+-                    deviceProductID: deviceProductID)
+-            } else {
+-                // Don't let an out-of-proximity report (a Xencelabs blip mid-debounce,
+-                // or any vendor's genuine exit) touch the relative anchor — its position
+-                // data is exactly the kind of near-edge-of-range reading likely to be
+-                // noisy or clamped, and poisoning lastRelativeNorm with it corrupts the
+-                // next real report's delta into a spurious jump. The cursor is already
+-                // sitting wherever the last real move put it; reuse that.
+-                rawPoint = currentCursorPosition()
+-            }
+-        } else {
+-            guard let absPoint = displayMapper.mapToScreen(
+-                point, snapshot: snap, deviceProductID: deviceProductID)
+-            else {
+-                // Pen outside active area — deadzone, no events
+-                displayMapper.clearRelativeAnchor()
+-                return
+-            }
+-            rawPoint = Self.pinNearScreenEdges(
+-                absPoint, in: displayMapper.displayBounds(for: snap))
+-        }
++
++        guard let rawPoint = resolveRawPoint(point: &point, snap: snap) else { return }
++
+         let rawPressure = InputInjector.curvedPressure(
+             point.normalizedPressure, lut: tool.pressureLUT)
+-        // Mouse tools have no tip pressure — button1 is the primary click trigger.
+-        // For KC-100 over USB, the left button arrives via the separate 0x01 mouse interface
+-        // and injectMouseButtons() has already fired leftMouseDown/Up.  Keep tipDown false
+-        // so inject() doesn't re-fire the click; usbMouseLeftHeld drives drag vs hover below.
+-        let tipDown =
+-            activeToolIsMouse
+-            ? (usbMouseLeftHeld ? false : point.penButton1)
+-            : rawPressure > InputInjector.tipPressureThreshold
++        let tipDown = resolveTipDown(point: point, rawPressure: rawPressure)
+
+-        // ── Pressure smoothing (contact only) ──────────────────────────────────
+-        // Damps sensor noise near the low-pressure/activation-threshold band
+-        // (visible as splotchy line-width variation on slow, light strokes).
+-        // Uses raw pressure for tipDown detection above so contact latency is
+-        // unaffected; only the transmitted line-width value is smoothed, and
+-        // a stroke's first sample always adopts the raw value verbatim.
+-        let pressure: Double
+-        if tipDown {
+-            pressure = pressureSmoother.applySmoothing(
+-                rawPressure: rawPressure, strokeStarting: !lastTipDown)
+-        } else {
+-            pressure = rawPressure
+-            pressureSmoother.reset()
+-        }
++        let pressure = applyPressureSmoothing(rawPressure: rawPressure, tipDown: tipDown)
+
+-        // ── Xencelabs proximity-dropout debounce ────────────────────────────────
+-        // See proximityExitDebounceTimer's declaration for why. A lone
+-        // out-of-range report defers the exit cleanup instead of running it
+-        // immediately; a real report reappearing before the timer fires
+-        // cancels the deferral and this frame is processed as a normal
+-        // in-proximity sample (lastProximity never flipped, so nothing else
+-        // downstream notices the blip).
+-        if deviceVendorID == 0x28BD {
+-            if point.inProximity {
+-                if let timer = proximityExitDebounceTimer {
+-                    CFRunLoopTimerInvalidate(timer)
+-                    proximityExitDebounceTimer = nil
+-                }
+-            } else if lastProximity && proximityExitDebounceTimer == nil {
+-                // A held tip/barrel/mouse button gets the long safety-net delay
+-                // instead of the short blip debounce — see the property's doc.
+-                let anyButtonHeld =
+-                    lastTipDown || lastButton1Down || lastButton2Down || lastButton3Down
+-                    || lastMiddleDown || usbMouseLeftHeld || lastUSBMouseMask != 0
+-                let delay = anyButtonHeld
+-                    ? proximityExitHeldButtonSafetyInterval : proximityExitDebounceInterval
+-                if anyButtonHeld {
+-                    // A held button's own up-debounce (handleXencelabsBarrelButton)
+-                    // runs on its own short timer; a hover-blip up-edge just before
+-                    // crossing fully out of range could have armed it, and it would
+-                    // otherwise fire mid-wait and release the button behind this
+-                    // longer deferral's back. Once full proximity loss is the thing
+-                    // being waited on, it alone decides — cancel the pending release.
+-                    button1UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
+-                    button1UpDebounceTimer = nil
+-                    button2UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
+-                    button2UpDebounceTimer = nil
+-                    button3UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
+-                    button3UpDebounceTimer = nil
+-                }
+-                let timer = CFRunLoopTimerCreateWithHandler(
+-                    kCFAllocatorDefault,
+-                    CFAbsoluteTimeGetCurrent() + delay,
+-                    0, 0, 0
+-                ) { [weak self] _ in
+-                    guard let self else { return }
+-                    self.proximityExitDebounceTimer = nil
+-                    self.commitProximityExit(snap: snap)
+-                }
+-                CFRunLoopAddTimer(HIDThread.shared.runLoop, timer, .commonModes)
+-                proximityExitDebounceTimer = timer
+-                return
+-            }
+-        }
++        if handleXencelabsDebounce(point: point, snap: snap) { return }
+
+         let enteringProximity = point.inProximity && !lastProximity
+-        let eraserFlipped = point.inProximity && lastProximity && (point.eraser != lastEraserMode)
+-
+-        // ── Proximity transitions (always immediate) ───────────────────────────
+-        if point.inProximity != lastProximity {
+-            // Suppress tabletProximity for plain-mouse profiles: receiving this event
+-            // triggers NSTextView's tablet-tracking code path, causing it to route
+-            // subsequent mouse events through pressure-selection logic that breaks
+-            // normal text selection (drag doesn't extend, only Shift/Command drag works).
+-            if activeAppProfile == .generic {
+-                postProximityEvent(
+-                    entering: point.inProximity, at: rawPoint,
+-                    eraser: point.eraser)
+-            }
+-            if point.inProximity {
+-                activeToolIsEraser = point.eraser
+-                lastEraserMode = point.eraser
+-                smoother.smoothingStrength = tool.smoothingStrength
+-                pressureSmoother.smoothingStrength = tool.pressureSmoothingStrength
+-                lastProximity = true
+-            } else {
+-                commitProximityExit(snap: snap)
+-            }
+-        }
+-
+-        // ── Eraser/tip flip (while in proximity) ───────────────────────────────
+-        if eraserFlipped {
+-            // Pen was flipped between tip and eraser while in proximity.
+-            // Post synthetic proximity exit/enter so apps re-register the tool identity.
+-            // This ensures distinct pointerType (1=pen, 3=eraser) and serial registration.
+-            postProximityEvent(entering: false, at: rawPoint, eraser: !point.eraser)
+-            activeToolIsEraser = point.eraser
+-            lastEraserMode = point.eraser
+-            postProximityEvent(entering: true, at: rawPoint, eraser: point.eraser)
+-        }
++        handleProximityTransitions(point: point, rawPoint: rawPoint, tool: tool, snap: snap)
+
+         guard point.inProximity else { return }
+
+-        // ── Position smoothing (every report) ─────────────────────────────────
+         let screenPoint = smoother.applySmoothing(
+             rawPoint: rawPoint, enteringProximity: enteringProximity)
+
+-        // ── Scroll Drag: convert this frame's motion to a scroll delta ──────
+-        // Runs before the movement/delta-gate path below, which consults
+-        // panScroll.isActive to post scrolls in place of cursor motion. dt
+-        // feeds the tracker's release-velocity estimate and its anchor
+-        // damping; deltas themselves are displacement, not rate. The
+-        // damping is calibrated in real seconds, so this must stay a true
+-        // inter-report delta. The smoother keeps tracking normally while
+-        // panned, so cursor re-entry on disengage doesn't jump.
+-        let panNow = CFAbsoluteTimeGetCurrent()
+-        let panDt = lastPanScrollFrameTime > 0 ? panNow - lastPanScrollFrameTime : 0
+-        lastPanScrollFrameTime = panNow
+-        if panScroll.isActive {
+-            postPanScroll(panScroll.process(screen: screenPoint, dt: panDt))
+-        }
+-        // Pose is per-report constant; computed once here and passed to every
+-        // post call below instead of each recomputing it.
++        processScrollDrag(screenPoint: screenPoint)
++
+         let pose = resolveEffectivePose(point: point, snapshot: snap)
+         shimLastPoint = point
+         shimLastScreen = screenPoint
+         shimLastPressure = pressure
+
+-        // ── Jitter tracking (hover only, every report) ─────────────────────────
+-        if !tipDown {
+-            smoother.observeHoverRaw(rawPoint)
+-        } else {
+-            smoother.endHover()
+-        }
++        observeHover(tipDown: tipDown, rawPoint: rawPoint)
+
+-        // ── Tip press transitions (always immediate) ───────────────────────────
+-        if tipDown != lastTipDown {
+-            if !activeToolIsMouse && activeAppNeedsTabletPointerEvents {
+-                postTabletPointerEvent(
+-                    at: screenPoint, pressure: pressure, point: point, pose: pose,
+-                    snapshot: snap)
+-            }
+-            if tipDown {
+-                // Cancel any pending deferred mouseUp — tip is back down.
+-                cancelPendingMouseUp()
+-                didEmitDragSinceDown = false
+-                if panScroll.isActive {
+-                    // Scroll Drag is holding the pointer as a pan surface:
+-                    // the tip contact is a grab, not a click. Swallow the
+-                    // mouseDown so a touch doesn't start a selection or fire
+-                    // the tip binding; the matching mouseUp below is
+-                    // swallowed symmetrically (lastTipDown still tracks the
+-                    // physical tip).
+-                } else {
+-                    let tipAction = activeToolIsEraser ? tool.eraserBinding : tool.tipBinding
+-                    activeButton = tipAction.mouseButton ?? .left
+-                    let (clickPt, count) = resolveClick(screenPoint, snapshot: snap)
+-                    activeClickCount = count
+-                    tipDownOrigin = clickPt
+-                    postMouseDown(
+-                        button: activeButton, at: clickPt,
+-                        pressure: pressure, clickCount: count,
+-                        point: point,
+-                        snapshot: snap)
+-                }
+-            } else {
+-                if panScroll.isActive {
+-                    // Symmetric to the swallowed mouseDown above: no click
+-                    // ever fired, so no mouseUp either. The pen lift is just
+-                    // the end of a grab.
+-                } else {
+-                let btn = activeButton
+-                let count = activeClickCount
+-                let pt = point
+-
+-                if activeAppProfile == .generic
+-                    && snap.tipUpAssistDelay > 0
+-                    && smoother.recentVelocity > Self.tipUpAssistVelocityThreshold {
+-                    // Defer the mouseUp briefly so fast strokes aren't cut short.
+-                    // The deferred mouseUp captures `snap` so it has all the values it
+-                    // needs; the live snapshot may have rolled over by the time it fires.
+-                    let capturedSnap = snap
+-                    // One-shot timer on HIDThread's run loop: the delay stays
+-                    // honest under main-thread congestion, and the handler runs
+-                    // on the same thread that owns all per-report state — no hop,
+-                    // no cancellation race (invalidation on this thread guarantees
+-                    // the handler never fires afterwards).
+-                    let timer = CFRunLoopTimerCreateWithHandler(
+-                        kCFAllocatorDefault,
+-                        CFAbsoluteTimeGetCurrent() + snap.tipUpAssistDelay / 1000.0,
+-                        0,  // interval — one-shot
+-                        0, 0
+-                    ) { [weak self] _ in
+-                        guard let self, self.pendingMouseUp != nil else { return }
+-                        self.pendingMouseUp = nil
+-                        // Fire at lastPostedPoint, not at the tip-lift position.
+-                        // By the time this fires (~80ms after physical tip-lift),
+-                        // mouseMoved events have advanced lastPostedPoint to wherever
+-                        // the pen currently is.  Firing at the original lift-off would
+-                        // warp the cursor back, then snap forward on the next inject(),
+-                        // creating a visible cursor zap and spurious drag.  For drawing
+-                        // strokes the pen travels only a few pixels in 80ms, so
+-                        // stroke-end fidelity is effectively unchanged.
+-                        self.postMouseUp(
+-                            button: btn, at: self.lastPostedPoint, clickCount: count,
+-                            point: pt, snapshot: capturedSnap)
+-                    }
+-                    pendingMouseUp = timer
+-                    if let timer {
+-                        CFRunLoopAddTimer(HIDThread.shared.runLoop, timer, .commonModes)
+-                    }
+-                } else {
+-                    postMouseUp(
+-                        button: activeButton, at: screenPoint,
+-                        clickCount: activeClickCount, point: point,
+-                        snapshot: snap)
+-                }
+-                }
+-            }
+-            lastPostedPoint = screenPoint
+-            lastPostedPressure = pressure
+-            hasPostedPoint = true
+-
+-        } else if panScroll.isActive {
+-            // ── Scroll Drag: ungated movement ──────────────────────────────
+-            // Scroll motion is independent of the cursor delta gate (which is
+-            // tuned to suppress stationary-pen duplicates, not to meter a
+-            // gesture). The tip's click was swallowed on the way down, so the
+-            // pen reads as a pure pan surface here — no drag, no hover move,
+-            // just position bookkeeping for the next frame's delta and the
+-            // velocity window.
+-            if hasPostedPoint {
+-                let delta = hypot(
+-                    screenPoint.x - lastPostedPoint.x,
+-                    screenPoint.y - lastPostedPoint.y)
+-                smoother.recordMoveDelta(delta)
+-            }
+-            lastPostedPoint = screenPoint
+-            lastPostedPressure = pressure
+-            hasPostedPoint = true
+-
+-        } else {
+-            // ── Continuous movement: delta gate ────────────────────────────────
+-            // Pressure-only changes count as movement so drawing apps receive
+-            // pressure updates from a stationary pen (airbrush buildup) — but
+-            // not for Finder, where the resulting drag events cancel desktop
+-            // rename-edit (see AppInputProfile.finderPlainMouse).
+-            let moved =
+-                !hasPostedPoint
+-                || (screenPoint.x - lastPostedPoint.x).magnitude > Self.positionEpsilon
+-                || (screenPoint.y - lastPostedPoint.y).magnitude > Self.positionEpsilon
+-                || (tipDown && activeAppProfile != .finderPlainMouse
+-                    && (pressure - lastPostedPressure).magnitude > Self.pressureEpsilon)
+-
+-            // USB mouse left button held (KC-100): injectMouseButtons() already sent
+-            // leftMouseDown; use leftMouseDragged so apps receive proper drag events.
+-            let dragging = tipDown || (activeToolIsMouse && usbMouseLeftHeld)
+-
+-            // Pages text engine requires a leftMouseDragged immediately after
+-            // leftMouseDown to start selection; tiny sub-epsilon pen movement on
+-            // the first contact frame can cause the gate to suppress that first drag
+-            // event, leaving Pages in a state where selection never begins.
+-            let forceFirstDrag = dragging && activeAppProfile == .pagesPlainMouse && !didEmitDragSinceDown
+-
+-            if moved || forceFirstDrag {
+-                // Track velocity for tip-up assist.
+-                if hasPostedPoint {
+-                    let delta = hypot(
+-                        screenPoint.x - lastPostedPoint.x,
+-                        screenPoint.y - lastPostedPoint.y)
+-                    smoother.recordMoveDelta(delta)
+-                }
+-                if !activeToolIsMouse && activeAppNeedsTabletPointerEvents {
+-                    postTabletPointerEvent(
+-                        at: screenPoint, pressure: pressure, point: point, pose: pose,
+-                        snapshot: snap)
+-                }
+-                // Drag threshold: while the tip is down and no drag has been
+-                // emitted yet, hold off posting leftMouseDragged until the pen
+-                // has traveled snap.dragThreshold points from where it went
+-                // down. Absorbs tremor/pressure jitter that would otherwise
+-                // turn a tap into a spurious drag (e.g. canceling a Finder
+-                // rename-edit or starting an unwanted text selection).
+-                // forceFirstDrag always bypasses this — Pages needs that first
+-                // drag event regardless.
+-                let withinDragThreshold =
+-                    tipDown && !didEmitDragSinceDown && !forceFirstDrag
+-                    && snap.dragThreshold > 0
+-                    && hypot(screenPoint.x - tipDownOrigin.x, screenPoint.y - tipDownOrigin.y)
+-                        < snap.dragThreshold
+-
+-                if dragging {
+-                    if !withinDragThreshold {
+-                        postMouseDrag(
+-                            button: activeButton, at: screenPoint, pressure: pressure, point: point,
+-                            pose: pose, snapshot: snap)
+-                        didEmitDragSinceDown = true
+-                    }
+-                } else if panScroll.isActive {
+-                    // Scroll Drag held: pen motion became scroll deltas above;
+-                    // the cursor stays put. Skip the drag/move posting entirely.
+-                } else if let dragBtn = hoverDragButton {
+-                    // Barrel button held while hovering — send otherMouseDragged /
+-                    // rightMouseDragged so apps like SketchUp receive a proper drag stream.
+-                    postMouseDrag(
+-                        button: dragBtn, at: screenPoint, pressure: 0, point: point,
+-                        pose: pose, snapshot: snap)
+-                } else {
+-                    postMouseMoved(
+-                        at: screenPoint, point: point, pose: pose,
+-                        snapshot: snap)
+-                }
+-                lastPostedPoint = screenPoint
+-                lastPostedPressure = pressure
+-                hasPostedPoint = true
+-            }
+-        }
+-        lastTipDown = tipDown
++        handleTipTransitions(
++            tipDown: tipDown, screenPoint: screenPoint, pressure: pressure,
++            pose: pose, point: point, snap: snap, tool: tool)
+
+-        // ── Pen button transitions (always immediate) ───────────────────────────
+-        let btn1 = tool.penButton1Binding
+-        let btn2 = tool.penButton2Binding
+-        let btn3 = tool.penButton3Binding
++        handlePenButtonTransitions(
++            point: point, screenPoint: screenPoint,
++            snap: snap, settings: settings, tool: tool)
+
+-        if deviceVendorID == 0x28BD {
+-            if !activeToolIsMouse {
+-                handleXencelabsBarrelButton(
+-                    slot: .one, down: point.penButton1, binding: btn1,
+-                    at: screenPoint, snap: snap, settings: settings)
+-                // barrelLowBit (3-button pen's dedicated lower button, see
+-                // XencelabsDecoder) arrives in the same digitizer stream as
+-                // button1/2 but previously wasn't dispatched here — it only
+-                // reached TabletManager's live UI display, never
+-                // fireButtonAction, so a binding assigned to it had no
+-                // effect anywhere else on the system. Same debounce as the
+-                // others since it rides the same short button-sensing range.
+-                handleXencelabsBarrelButton(
+-                    slot: .three, down: point.penButton3, binding: btn3,
+-                    at: screenPoint, snap: snap, settings: settings)
+-            } else {
+-                lastButton1Down = point.penButton1
+-            }
+-            handleXencelabsBarrelButton(
+-                slot: .two, down: point.penButton2, binding: btn2,
+-                at: screenPoint, snap: snap, settings: settings)
+-        } else {
+-            if point.penButton1 != lastButton1Down {
+-                // Update tracking state first so the quiescent check inside
+-                // fireButtonAction sees the current button state, not the pre-transition state.
+-                lastButton1Down = point.penButton1
+-                // For mouse tools button1 drives the primary click (tipDown above);
+-                // dispatching it again as a button action would double-fire.
+-                if !activeToolIsMouse {
+-                    fireButtonAction(btn1, down: point.penButton1, at: screenPoint,
+-                                     snapshot: snap, settings: settings)
+-                }
+-            }
+-            if point.penButton2 != lastButton2Down {
+-                lastButton2Down = point.penButton2
+-                fireButtonAction(btn2, down: point.penButton2, at: screenPoint,
+-                                 snapshot: snap, settings: settings)
+-            }
+-        }
++        handleMouseToolTransitions(point: point, screenPoint: screenPoint)
++    }
+
+-        // ── Middle button (mouse tool only, always immediate) ──────────────────
+-        if point.mouseMiddleButton != lastMiddleDown {
+-            let type: CGEventType = point.mouseMiddleButton ? .otherMouseDown : .otherMouseUp
+-            if let e = CGEvent(
+-                mouseEventSource: sessionSource, mouseType: type,
+-                mouseCursorPosition: screenPoint, mouseButton: .center)
+-            {
+-                e.flags = currentEventFlags
+-                finalizeAndPost(e)
+-            }
+-            lastMiddleDown = point.mouseMiddleButton
++    private func resolveRawPoint(point: inout TabletPoint, snap: InjectionSnapshot) -> CGPoint? {
++        if snap.invertRotation && point.rotation != 0.0 {
++            point.rotation = (360.0 - point.rotation).truncatingRemainder(dividingBy: 360.0)
+         }
+-
+-        // ── Scroll wheel (mouse tool only, always immediate) ───────────────────
+-        if point.mouseWheelDelta != 0 {
+-            postScrollWheelEvent(delta: point.mouseWheelDelta, at: screenPoint)
++        if snap.relativeCursorMovement {
++            if point.inProximity {
++                return displayMapper.resolveRelativePoint(
++                    point, snapshot: snap, currentCursorPosition: currentCursorPosition(),
++                    deviceProductID: deviceProductID)
++            } else {
++                return currentCursorPosition()
++            }
++        } else {
++            guard let absPoint = displayMapper.mapToScreen(
++                point, snapshot: snap, deviceProductID: deviceProductID)
++            else {
++                displayMapper.clearRelativeAnchor()
++                return nil
++            }
++            return Self.pinNearScreenEdges(
++                absPoint, in: displayMapper.displayBounds(for: snap))
+         }
+     }
+
++    private func resolveTipDown(point: TabletPoint, rawPressure: Double) -> Bool {
++        return activeToolIsMouse
++            ? (usbMouseLeftHeld ? false : point.penButton1)
++            : rawPressure > InputInjector.tipPressureThreshold
++    }
++
++    private func applyPressureSmoothing(rawPressure: Double, tipDown: Bool) -> Double {
++        if tipDown {
++            return pressureSmoother.applySmoothing(
++                rawPressure: rawPressure, strokeStarting: !lastTipDown)
++        } else {
++            pressureSmoother.reset()
++            return rawPressure
++        }
++    }
++
++    private func handleXencelabsDebounce(point: TabletPoint, snap: InjectionSnapshot) -> Bool {
++        guard deviceVendorID == 0x28BD else { return false }
++        if point.inProximity {
++            if let timer = proximityExitDebounceTimer {
++                CFRunLoopTimerInvalidate(timer)
++                proximityExitDebounceTimer = nil
++            }
++        } else if lastProximity && proximityExitDebounceTimer == nil {
++            let anyButtonHeld =
++                lastTipDown || lastButton1Down || lastButton2Down || lastButton3Down
++                || lastMiddleDown || usbMouseLeftHeld || lastUSBMouseMask != 0
++            let delay = anyButtonHeld
++                ? proximityExitHeldButtonSafetyInterval : proximityExitDebounceInterval
++            if anyButtonHeld {
++                button1UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
++                button1UpDebounceTimer = nil
++                button2UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
++                button2UpDebounceTimer = nil
++                button3UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
++                button3UpDebounceTimer = nil
++            }
++            let timer = CFRunLoopTimerCreateWithHandler(
++                kCFAllocatorDefault,
++                CFAbsoluteTimeGetCurrent() + delay,
++                0, 0, 0
++            ) { [weak self] _ in
++                guard let self else { return }
++                self.proximityExitDebounceTimer = nil
++                self.commitProximityExit(snap: snap)
++            }
++            CFRunLoopAddTimer(HIDThread.shared.runLoop, timer, .commonModes)
++            proximityExitDebounceTimer = timer
++            return true
++        }
++        return false
++    }
++
++    private func handleProximityTransitions(
++        point: TabletPoint, rawPoint: CGPoint, tool: InjectionSnapshot.Tool, snap: InjectionSnapshot
++    ) {
++        let eraserFlipped = point.inProximity && lastProximity && (point.eraser != lastEraserMode)
++
++        if point.inProximity != lastProximity {
++            if activeAppProfile == .generic {
++                postProximityEvent(
++                    entering: point.inProximity, at: rawPoint,
++                    eraser: point.eraser)
++            }
++            if point.inProximity {
++                activeToolIsEraser = point.eraser
++                lastEraserMode = point.eraser
++                smoother.smoothingStrength = tool.smoothingStrength
++                pressureSmoother.smoothingStrength = tool.pressureSmoothingStrength
++                lastProximity = true
++            } else {
++                commitProximityExit(snap: snap)
++            }
++        }
++
++        if eraserFlipped {
++            postProximityEvent(entering: false, at: rawPoint, eraser: !point.eraser)
++            activeToolIsEraser = point.eraser
++            lastEraserMode = point.eraser
++            postProximityEvent(entering: true, at: rawPoint, eraser: point.eraser)
++        }
++    }
++
++    private func processScrollDrag(screenPoint: CGPoint) {
++        let panNow = CFAbsoluteTimeGetCurrent()
++        let panDt = lastPanScrollFrameTime > 0 ? panNow - lastPanScrollFrameTime : 0
++        lastPanScrollFrameTime = panNow
++        if panScroll.isActive {
++            postPanScroll(panScroll.process(screen: screenPoint, dt: panDt))
++        }
++    }
++
++    private func observeHover(tipDown: Bool, rawPoint: CGPoint) {
++        if !tipDown {
++            smoother.observeHoverRaw(rawPoint)
++        } else {
++            smoother.endHover()
++        }
++    }
++
++    private func handleTipTransitions(
++        tipDown: Bool, screenPoint: CGPoint, pressure: Double, pose: (tiltX: Double, tiltY: Double, rotation: Double),
++        point: TabletPoint, snap: InjectionSnapshot, tool: InjectionSnapshot.Tool
++    ) {
++        if tipDown != lastTipDown {
++            if !activeToolIsMouse && activeAppNeedsTabletPointerEvents {
++                postTabletPointerEvent(
++                    at: screenPoint, pressure: pressure, point: point, pose: pose,
++                    snapshot: snap)
++            }
++            if tipDown {
++                cancelPendingMouseUp()
++                didEmitDragSinceDown = false
++                if panScroll.isActive {
++                } else {
++                    let tipAction = activeToolIsEraser ? tool.eraserBinding : tool.tipBinding
++                    activeButton = tipAction.mouseButton ?? .left
++                    let (clickPt, count) = resolveClick(screenPoint, snapshot: snap)
++                    activeClickCount = count
++                    tipDownOrigin = clickPt
++                    postMouseDown(
++                        button: activeButton, at: clickPt,
++                        pressure: pressure, clickCount: count,
++                        point: point,
++                        snapshot: snap)
++                }
++            } else {
++                if panScroll.isActive {
++                } else {
++                    let btn = activeButton
++                    let count = activeClickCount
++                    let pt = point
++
++                    if activeAppProfile == .generic
++                        && snap.tipUpAssistDelay > 0
++                        && smoother.recentVelocity > Self.tipUpAssistVelocityThreshold {
++                        let capturedSnap = snap
++                        let timer = CFRunLoopTimerCreateWithHandler(
++                            kCFAllocatorDefault,
++                            CFAbsoluteTimeGetCurrent() + snap.tipUpAssistDelay / 1000.0,
++                            0, 0, 0
++                        ) { [weak self] _ in
++                            guard let self, self.pendingMouseUp != nil else { return }
++                            self.pendingMouseUp = nil
++                            self.postMouseUp(
++                                button: btn, at: self.lastPostedPoint, clickCount: count,
++                                point: pt, snapshot: capturedSnap)
++                        }
++                        pendingMouseUp = timer
++                        if let timer {
++                            CFRunLoopAddTimer(HIDThread.shared.runLoop, timer, .commonModes)
++                        }
++                    } else {
++                        postMouseUp(
++                            button: activeButton, at: screenPoint,
++                            clickCount: activeClickCount, point: point,
++                            snapshot: snap)
++                    }
++                }
++            }
++            lastPostedPoint = screenPoint
++            lastPostedPressure = pressure
++            hasPostedPoint = true
++
++        } else if panScroll.isActive {
++            if hasPostedPoint {
++                let delta = hypot(
++                    screenPoint.x - lastPostedPoint.x,
++                    screenPoint.y - lastPostedPoint.y)
++                smoother.recordMoveDelta(delta)
++            }
++            lastPostedPoint = screenPoint
++            lastPostedPressure = pressure
++            hasPostedPoint = true
++
++        } else {
++            handleContinuousMovement(
++                screenPoint: screenPoint, pressure: pressure, tipDown: tipDown,
++                pose: pose, point: point, snap: snap)
++        }
++        lastTipDown = tipDown
++    }
++
++    private func handleContinuousMovement(
++        screenPoint: CGPoint, pressure: Double, tipDown: Bool,
++        pose: (tiltX: Double, tiltY: Double, rotation: Double),
++        point: TabletPoint, snap: InjectionSnapshot
++    ) {
++        let moved =
++            !hasPostedPoint
++            || (screenPoint.x - lastPostedPoint.x).magnitude > Self.positionEpsilon
++            || (screenPoint.y - lastPostedPoint.y).magnitude > Self.positionEpsilon
++            || (tipDown && activeAppProfile != .finderPlainMouse
++                && (pressure - lastPostedPressure).magnitude > Self.pressureEpsilon)
++
++        let dragging = tipDown || (activeToolIsMouse && usbMouseLeftHeld)
++        let forceFirstDrag = dragging && activeAppProfile == .pagesPlainMouse && !didEmitDragSinceDown
++
++        if moved || forceFirstDrag {
++            if hasPostedPoint {
++                let delta = hypot(
++                    screenPoint.x - lastPostedPoint.x,
++                    screenPoint.y - lastPostedPoint.y)
++                smoother.recordMoveDelta(delta)
++            }
++            if !activeToolIsMouse && activeAppNeedsTabletPointerEvents {
++                postTabletPointerEvent(
++                    at: screenPoint, pressure: pressure, point: point, pose: pose,
++                    snapshot: snap)
++            }
++            let withinDragThreshold =
++                tipDown && !didEmitDragSinceDown && !forceFirstDrag
++                && snap.dragThreshold > 0
++                && hypot(screenPoint.x - tipDownOrigin.x, screenPoint.y - tipDownOrigin.y)
++                    < snap.dragThreshold
++
++            if dragging {
++                if !withinDragThreshold {
++                    postMouseDrag(
++                        button: activeButton, at: screenPoint, pressure: pressure, point: point,
++                        pose: pose, snapshot: snap)
++                    didEmitDragSinceDown = true
++                }
++            } else if panScroll.isActive {
++            } else if let dragBtn = hoverDragButton {
++                postMouseDrag(
++                    button: dragBtn, at: screenPoint, pressure: 0, point: point,
++                    pose: pose, snapshot: snap)
++            } else {
++                postMouseMoved(
++                    at: screenPoint, point: point, pose: pose,
++                    snapshot: snap)
++            }
++            lastPostedPoint = screenPoint
++            lastPostedPressure = pressure
++            hasPostedPoint = true
++        }
++    }
++
++    private func handlePenButtonTransitions(
++        point: TabletPoint, screenPoint: CGPoint,
++        snap: InjectionSnapshot, settings: TabletSettings?, tool: InjectionSnapshot.Tool
++    ) {
++        let btn1 = tool.penButton1Binding
++        let btn2 = tool.penButton2Binding
++        let btn3 = tool.penButton3Binding
++
++        if deviceVendorID == 0x28BD {
++            if !activeToolIsMouse {
++                handleXencelabsBarrelButton(
++                    slot: .one, down: point.penButton1, binding: btn1,
++                    at: screenPoint, snap: snap, settings: settings)
++                handleXencelabsBarrelButton(
++                    slot: .three, down: point.penButton3, binding: btn3,
++                    at: screenPoint, snap: snap, settings: settings)
++            } else {
++                lastButton1Down = point.penButton1
++            }
++            handleXencelabsBarrelButton(
++                slot: .two, down: point.penButton2, binding: btn2,
++                at: screenPoint, snap: snap, settings: settings)
++        } else {
++            if point.penButton1 != lastButton1Down {
++                lastButton1Down = point.penButton1
++                if !activeToolIsMouse {
++                    fireButtonAction(btn1, down: point.penButton1, at: screenPoint,
++                                     snapshot: snap, settings: settings)
++                }
++            }
++            if point.penButton2 != lastButton2Down {
++                lastButton2Down = point.penButton2
++                fireButtonAction(btn2, down: point.penButton2, at: screenPoint,
++                                 snapshot: snap, settings: settings)
++            }
++        }
++    }
++
++    private func handleMouseToolTransitions(point: TabletPoint, screenPoint: CGPoint) {
++        if point.mouseMiddleButton != lastMiddleDown {
++            let type: CGEventType = point.mouseMiddleButton ? .otherMouseDown : .otherMouseUp
++            if let e = CGEvent(
++                mouseEventSource: sessionSource, mouseType: type,
++                mouseCursorPosition: screenPoint, mouseButton: .center)
++            {
++                e.flags = currentEventFlags
++                finalizeAndPost(e)
++            }
++            lastMiddleDown = point.mouseMiddleButton
++        }
++
++        if point.mouseWheelDelta != 0 {
++            postScrollWheelEvent(delta: point.mouseWheelDelta, at: screenPoint)
++        }
++    }
++
+     /// Runs the proximity-exit cleanup: releases the tip, any held USB/middle
+     /// mouse buttons, and synthetic modifiers, then resets per-proximity

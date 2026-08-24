@@ -11,6 +11,21 @@ import TabletKit
 /// Status dashboard tab — shows live device state, system permissions,
 /// and a collapsible diagnostic dump for technical analysis.
 struct InfoView: View {
+    private struct DiagnosticDateFormatterCache: @unchecked Sendable {
+        let formatter: DateFormatter
+
+        init() {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            self.formatter = fmt
+        }
+
+        func string(from date: Date) -> String {
+            return formatter.string(from: date)
+        }
+    }
+    private static let diagnosticDateFormatter = DiagnosticDateFormatterCache()
+
     @ObservedObject var tabletManager: TabletManager
     @ObservedObject var settings: TabletSettings
     let instanceKey: DeviceInstanceKey?
@@ -543,9 +558,7 @@ struct InfoView: View {
     private func buildDiagnosticText() -> String {
         var lines: [String] = []
 
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        lines += [String(localized: "Generated : \(fmt.string(from: Date()))", comment: "Diagnostic: timestamp when info was generated")]
+        lines += [String(localized: "Generated : \(InfoView.diagnosticDateFormatter.string(from: Date()))", comment: "Diagnostic: timestamp when info was generated")]
 
         let ver =
             Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"

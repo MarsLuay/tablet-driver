@@ -373,12 +373,22 @@ struct ProfilesView: View {
         }
     }
 
-    private static let exportDateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd"
-        fmt.timeZone = .autoupdatingCurrent
-        return fmt
-    }()
+    private struct ExportDateFormatterCache: @unchecked Sendable {
+        let formatter: DateFormatter
+
+        init() {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd"
+            fmt.timeZone = .autoupdatingCurrent
+            self.formatter = fmt
+        }
+
+        func string(from date: Date) -> String {
+            return formatter.string(from: date)
+        }
+    }
+
+    private static let exportDateFormatter = ExportDateFormatterCache()
 
     private func saveExportToFile() {
         let exporter = PresetExporter(registry: registry, tabletManager: tabletManager)

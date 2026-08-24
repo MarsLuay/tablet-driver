@@ -21,6 +21,21 @@ private let logger = Logger(subsystem: "com.cyzor.mocktab", category: "capture")
 /// per-report cost is a couple of atomics, negligible at 133 Hz.
 final class HIDCapture {
 
+    private struct CaptureDateFormatterCache: @unchecked Sendable {
+        let formatter: DateFormatter
+
+        init() {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyyMMdd_HHmmss"
+            self.formatter = fmt
+        }
+
+        func string(from date: Date) -> String {
+            return formatter.string(from: date)
+        }
+    }
+    private static let captureDateFormatter = CaptureDateFormatterCache()
+
     static let shared = HIDCapture()
     private init() {}
 
@@ -142,9 +157,7 @@ final class HIDCapture {
         }
         guard let snap = snapshot else { return nil }
 
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyyMMdd_HHmmss"
-        let stamp = fmt.string(from: snap.start)
+        let stamp = HIDCapture.captureDateFormatter.string(from: snap.start)
 
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop/mocktab_capture_\(stamp).txt")

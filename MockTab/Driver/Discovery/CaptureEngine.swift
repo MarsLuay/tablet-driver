@@ -310,7 +310,7 @@ final class CaptureEngine: ObservableObject {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.calendar = Calendar(identifier: .gregorian)
-        fmt.timeZone = .current
+        fmt.timeZone = .autoupdatingCurrent
         fmt.dateFormat = "yyyyMMdd_HHmmss"
         return fmt
     }()

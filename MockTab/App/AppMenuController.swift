@@ -530,13 +530,12 @@ final class AppMenuController: NSObject, NSMenuDelegate {
 
         // Relaunch so the new instance reads factory defaults rather than the
         // stale in-memory @Published / @AppStorage state from this session.
-        // NSWorkspace.open() won't spawn a second instance while this one is
-        // still alive, so we delegate the open to a detached shell that polls
-        // until our PID exits and then calls `open`.
-        let bundlePath = Bundle.main.bundleURL.path
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.1; done; open \"\(bundlePath)\""
-        Process.launchedProcess(launchPath: "/bin/sh", arguments: ["-c", script])
+        // We use NSWorkspace to spawn a new instance to replace this one.
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: configuration,
+                                           completionHandler: nil)
         NSApp.terminate(nil)
     }
 

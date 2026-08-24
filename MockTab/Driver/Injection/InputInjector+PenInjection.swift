@@ -597,8 +597,8 @@ extension InputInjector {
         // buttonUpDebounceMenuInterval). Everything else stays crisp.
         let window: TimeInterval
         switch binding.kind {
-        case .rightClick, .eraser: window = buttonUpDebounceMenuInterval
-        default: window = buttonUpDebounceInterval
+        case .rightClick, .eraser: window = Self.buttonUpDebounceMenuInterval
+        default: window = Self.buttonUpDebounceInterval
         }
         let timer = CFRunLoopTimerCreateWithHandler(
             kCFAllocatorDefault,

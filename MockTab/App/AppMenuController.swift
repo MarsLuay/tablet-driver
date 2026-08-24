@@ -518,8 +518,7 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         // key ever written: device settings, presets, tool settings, registry,
         // and window state.
         if let domain = Bundle.main.bundleIdentifier {
-            let defaults = UserDefaults.standard
-            defaults.removePersistentDomain(forName: domain)
+            UserDefaults.standard.removePersistentDomain(forName: domain)
         }
 
         // Also clear NSWindow autosave caches for window frames.  These are stored

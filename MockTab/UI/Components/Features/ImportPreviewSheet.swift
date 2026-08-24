@@ -261,12 +261,16 @@ struct ImportPreviewSheet: View {
         onDismiss()
     }
 
-    private func formattedDate(_ iso: String) -> String {
-        let parser = ISO8601DateFormatter()
-        guard let date = parser.date(from: iso) else { return iso }
+    private static let isoParser = ISO8601DateFormatter()
+    private static let displayFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
         fmt.timeStyle = .short
-        return fmt.string(from: date)
+        return fmt
+    }()
+
+    private func formattedDate(_ iso: String) -> String {
+        guard let date = Self.isoParser.date(from: iso) else { return iso }
+        return Self.displayFormatter.string(from: date)
     }
 }

@@ -306,13 +306,17 @@ final class CaptureEngine: ObservableObject {
     /// the user's region. Without this, a submitted capture came back named
     /// `mocktab_discovery_0x0000_14050418_150909.json` — Persian calendar year
     /// 1405 — which sorts and reads as nonsense next to every other file.
-    private static func fileStamp(_ date: Date = Date()) -> String {
+    private static let stampFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.calendar = Calendar(identifier: .gregorian)
         fmt.timeZone = .current
         fmt.dateFormat = "yyyyMMdd_HHmmss"
-        return fmt.string(from: date)
+        return fmt
+    }()
+
+    private static func fileStamp(_ date: Date = Date()) -> String {
+        return stampFormatter.string(from: date)
     }
 
     // MARK: - Result Building

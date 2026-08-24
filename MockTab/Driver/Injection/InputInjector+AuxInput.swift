@@ -30,9 +30,22 @@ extension InputInjector {
     func injectAux(buttons: AuxButtons, settings: TabletSettings?) {
         rearmWatchdog()
         guard let snap = injectionSnapshot else { return }
-        let bindings = snap.expressKeyBindings
         let cursorPos = currentCursorPosition()
 
+        injectExpressKeys(buttons: buttons, snapshot: snap, cursorPos: cursorPos, settings: settings)
+        injectBezelButtons(buttons: buttons, snapshot: snap, cursorPos: cursorPos, settings: settings)
+
+        injectTouchRingCenterButton(buttons: buttons, snapshot: snap, cursorPos: cursorPos, settings: settings)
+
+        let activeSlot: ControlSlot? = snap.touchRingSlots.indices.contains(snap.touchRingActiveSlotIndex)
+            ? snap.touchRingSlots[snap.touchRingActiveSlotIndex] : nil
+
+        injectTouchRings(buttons: buttons, activeSlot: activeSlot, snapshot: snap, cursorPos: cursorPos, settings: settings)
+        injectTouchStrips(buttons: buttons, activeSlot: activeSlot, snapshot: snap, cursorPos: cursorPos, settings: settings)
+    }
+
+    private func injectExpressKeys(buttons: AuxButtons, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
+        let bindings = snap.expressKeyBindings
         // ── Express keys ───────────────────────────────────────────────────────
         for i in 0..<16 {
             let down = buttons[i]
@@ -54,7 +67,9 @@ extension InputInjector {
                 // lastAuxButtons[i] stays true — the button is still down after this cycle
             }
         }
+    }
 
+    private func injectBezelButtons(buttons: AuxButtons, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
         // ── Bezel buttons (device's own onboard capacitive buttons; e.g. the
         // Cintiq DTK-2400's OSD keys) — decoded into `buttons[16..18]` by the
         // relevant decoder but routed through their own binding set rather
@@ -70,7 +85,9 @@ extension InputInjector {
                                  snapshot: snap, settings: settings, isAux: true)
             }
         }
+    }
 
+    private func injectTouchRingCenterButton(buttons: AuxButtons, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
         // ── Touch ring center button ───────────────────────────────────────────
         let ringButtonDown = buttons.touchRingButtonDown
         if ringButtonDown != lastRingButtonDown {
@@ -78,14 +95,13 @@ extension InputInjector {
             fireButtonAction(snap.touchRingButtonBinding, down: ringButtonDown,
                              at: cursorPos, snapshot: snap, settings: settings, isAux: true)
         }
+    }
 
+    private func injectTouchRings(buttons: AuxButtons, activeSlot: ControlSlot?, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
         // ── Touch ring ─────────────────────────────────────────────────────────
         // Position 0x7F means no contact.  Compute a wrap-aware delta when a
         // finger is actively moving (both current and previous positions valid).
         // The ring has 72 steps (0–71, ~5° each); wrap threshold is 36.
-        let activeSlot: ControlSlot? = snap.touchRingSlots.indices.contains(snap.touchRingActiveSlotIndex)
-            ? snap.touchRingSlots[snap.touchRingActiveSlotIndex] : nil
-
         let ringPos = buttons.touchRingPosition
         if buttons.touchRingActive, lastRingPos != 0x7F {
             var delta = Int(ringPos) - Int(lastRingPos)
@@ -117,7 +133,9 @@ extension InputInjector {
         }
         if !buttons.touchRing2Active { ring2Accum = 0 }
         lastRing2Pos = buttons.touchRing2Active ? ring2Pos : 0x7F
+    }
 
+    private func injectTouchStrips(buttons: AuxButtons, activeSlot: ControlSlot?, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
         // ── Touch strips (Intuos3 WS) — share touchRingSlots ───────────────────
         // Strips are linear (no wrap); each zone step maps 1:1 to a scroll event.
 

@@ -458,13 +458,15 @@ final class DeviceRegistry: ObservableObject {
     /// not belong to the currently selected tablet (so `renameTool(_:to:forDevice:)`,
     /// which operates on `knownTools`, could not find it).
     func renameToolEverywhere(id: String, to name: String) {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
         for tablet in knownTablets {
             guard let data = ud.data(forKey: toolsKey(tablet.instanceKey)),
-                var list = try? JSONDecoder().decode([KnownTool].self, from: data),
+                var list = try? decoder.decode([KnownTool].self, from: data),
                 let idx = list.firstIndex(where: { $0.id == id })
             else { continue }
             list[idx].nickname = name
-            guard let saved = try? JSONEncoder().encode(list) else { continue }
+            guard let saved = try? encoder.encode(list) else { continue }
             ud.set(saved, forKey: toolsKey(tablet.instanceKey))
         }
         if let idx = knownTools.firstIndex(where: { $0.id == id }) {
@@ -504,14 +506,16 @@ final class DeviceRegistry: ObservableObject {
     func forgetToolEverywhere(id: String) -> ToolRemovalSnapshot? {
         let tool = knownTools.first(where: { $0.id == id })
         var blobs: [String: Data] = [:]
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
         for tablet in knownTablets {
             guard let data = ud.data(forKey: toolsKey(tablet.instanceKey)),
-                var list = try? JSONDecoder().decode([KnownTool].self, from: data)
+                var list = try? decoder.decode([KnownTool].self, from: data)
             else { continue }
             let before = list.count
             list.removeAll { $0.id == id }
             guard list.count != before,
-                let saved = try? JSONEncoder().encode(list)
+                let saved = try? encoder.encode(list)
             else { continue }
             blobs[tablet.id] = data  // pre-removal blob
             ud.set(saved, forKey: toolsKey(tablet.instanceKey))
@@ -679,9 +683,10 @@ final class DeviceRegistry: ObservableObject {
     private func rebuildAllTools() {
         var seen = Set<String>()
         var merged = [KnownTool]()
+        let decoder = JSONDecoder()
         for tablet in knownTablets {
             guard let data = ud.data(forKey: toolsKey(tablet.instanceKey)),
-                let list = try? JSONDecoder().decode([KnownTool].self, from: data)
+                let list = try? decoder.decode([KnownTool].self, from: data)
             else { continue }
             for tool in list where seen.insert(tool.id).inserted {
                 merged.append(tool)

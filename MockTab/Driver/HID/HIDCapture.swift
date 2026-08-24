@@ -8,6 +8,22 @@ import os
 
 private let logger = Logger(subsystem: "com.cyzor.mocktab", category: "capture")
 
+private struct CaptureDateFormatterCache: @unchecked Sendable {
+    let formatter: DateFormatter
+
+    init() {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd_HHmmss"
+        self.formatter = fmt
+    }
+
+    func string(from date: Date) -> String {
+        formatter.string(from: date)
+    }
+}
+
+private let sharedCaptureDateFormatter = CaptureDateFormatterCache()
+
 /// Lightweight raw-HID capture buffer.
 ///
 /// Call `HIDCapture.shared.record(tag:report:length:)` at the top of every
@@ -20,21 +36,6 @@ private let logger = Logger(subsystem: "com.cyzor.mocktab", category: "capture")
 /// on main. All state is therefore guarded by a single unfair lock; the
 /// per-report cost is a couple of atomics, negligible at 133 Hz.
 final class HIDCapture {
-
-    private struct CaptureDateFormatterCache: @unchecked Sendable {
-        let formatter: DateFormatter
-
-        init() {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyyMMdd_HHmmss"
-            self.formatter = fmt
-        }
-
-        func string(from date: Date) -> String {
-            return formatter.string(from: date)
-        }
-    }
-    private static let captureDateFormatter = CaptureDateFormatterCache()
 
     static let shared = HIDCapture()
     private init() {}
@@ -157,7 +158,7 @@ final class HIDCapture {
         }
         guard let snap = snapshot else { return nil }
 
-        let stamp = HIDCapture.captureDateFormatter.string(from: snap.start)
+        let stamp = sharedCaptureDateFormatter.string(from: snap.start)
 
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop/mocktab_capture_\(stamp).txt")

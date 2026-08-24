@@ -512,7 +512,7 @@ final class InputInjector: @unchecked Sendable {
     var button1UpDebounceTimer: CFRunLoopTimer?
     var button2UpDebounceTimer: CFRunLoopTimer?
     var button3UpDebounceTimer: CFRunLoopTimer?
-    let buttonUpDebounceInterval: TimeInterval = {
+    static let buttonUpDebounceInterval: TimeInterval = {
         let ms = UserDefaults.standard.integer(forKey: "MockTabXencelabsButtonDebounceMS")
         return ms > 0 ? Double(ms) / 1000.0 : 0.05
     }()
@@ -540,7 +540,7 @@ final class InputInjector: @unchecked Sendable {
     ///
     /// Residual limit: a lift slower than 0.25 s reopens the same physics
     /// hole (release commits before proximity drops). Rare, not impossible.
-    let buttonUpDebounceMenuInterval: TimeInterval = 0.25
+    static let buttonUpDebounceMenuInterval: TimeInterval = 0.25
 
     // MARK: - Time-based leak watchdog
     //

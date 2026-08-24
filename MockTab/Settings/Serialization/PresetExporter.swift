@@ -8,21 +8,13 @@ import CoreGraphics
 /// Serializes tablet profiles and settings to JSON for backup/restore.
 @MainActor
 final class PresetExporter {
-    private struct ISO8601DateFormatterCache: @unchecked Sendable {
-        let formatter: ISO8601DateFormatter
-
-        init() {
-            self.formatter = ISO8601DateFormatter()
-        }
-
-        func string(from date: Date) -> String {
-            return formatter.string(from: date)
-        }
-    }
-    private static let isoFormatter = ISO8601DateFormatterCache()
+    static let iso = ISO8601DateFormatter()
 
     let registry: DeviceRegistry
     let tabletManager: TabletManager
+
+    private let decoder = JSONDecoder()
+    private var udDict: [String: Any] = [:]
 
     init(registry: DeviceRegistry, tabletManager: TabletManager) {
         self.registry = registry
@@ -31,10 +23,12 @@ final class PresetExporter {
 
     /// Builds a complete JSON backup of all known tablets and their settings.
     func export() -> Data? {
+        udDict = UserDefaults.standard.dictionaryRepresentation()
+        defer { udDict.removeAll() } // Free memory when done
         let tablets = registry.knownTablets.map { exportTablet($0) }
         let envelope: [String: Any] = [
             "version": 2,
-            "exportedAt": PresetExporter.isoFormatter.string(from: Date()),
+            "exportedAt": Self.iso.string(from: Date()),
             "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
             "tablets": tablets
         ]
@@ -200,63 +194,65 @@ final class PresetExporter {
     /// Fields that are already locale-independent (numbers, bools, raw ID strings) return
     /// `nil` for `machineKey` — there's nothing to disambiguate.
     private func readUDValue(key: String, prefix: String) -> (display: Any, machineKey: Any?)? {
-        let ud = UserDefaults.standard
+        let fullKey = prefix + key
+        let value = udDict[fullKey]
+
         switch key {
         case "activeAreaX", "activeAreaY", "activeAreaWidth", "activeAreaHeight",
              "smoothingStrength", "doubleClickDistance":
-            guard ud.object(forKey: prefix + key) != nil else { return nil }
-            return (roundFrac(ud.double(forKey: prefix + key)), nil)
+            guard let num = value as? NSNumber else { return nil }
+            return (roundFrac(num.doubleValue), nil)
 
         case "proportionalMapping", "invertRotation", "relativeCursorMovement":
-            guard ud.object(forKey: prefix + key) != nil else { return nil }
-            return (ud.bool(forKey: prefix + key), nil)
+            guard let num = value as? NSNumber else { return nil }
+            return (num.boolValue, nil)
 
         case "targetDisplayIndex":
-            guard ud.object(forKey: prefix + key) != nil else { return nil }
-            return (exportDisplayIndex(ud.integer(forKey: prefix + key)), nil)
+            guard let num = value as? NSNumber else { return nil }
+            return (exportDisplayIndex(num.intValue), nil)
 
         case "toggleDisplayIDs":
-            guard let raw = ud.string(forKey: prefix + key), !raw.isEmpty else { return nil }
+            guard let raw = value as? String, !raw.isEmpty else { return nil }
             let ids = raw.split(separator: ",")
                 .compactMap { UInt32($0.trimmingCharacters(in: .whitespaces)) }
                 .map { String($0) }
             return (ids, nil)
 
         case "tabletOrientation":
-            guard ud.object(forKey: prefix + key) != nil else { return nil }
-            let raw = ud.integer(forKey: prefix + key)
+            guard let num = value as? NSNumber else { return nil }
+            let raw = num.intValue
             return (TabletOrientation(rawValue: raw)?.label ?? "", raw)
 
         case "penButton1Binding", "penButton2Binding",
              "touchRingButtonBinding", "tipBinding", "eraserBinding":
-            guard let raw = ud.string(forKey: prefix + key) else { return nil }
+            guard let raw = value as? String else { return nil }
             let binding = ButtonBinding.decode(raw)
             return (binding?.displayLabel ?? raw, binding?.encoded)
 
         case "expressKeyBindings":
-            guard let raw = ud.string(forKey: prefix + key),
+            guard let raw = value as? String,
                   let data = raw.data(using: .utf8),
-                  let arr = try? JSONDecoder().decode([ButtonBinding].self, from: data)
+                  let arr = try? decoder.decode([ButtonBinding].self, from: data)
             else { return nil }
             return (arr.map(\.displayLabel), arr.map(\.encoded))
 
         case "touchRingMode", "touchStrip1Mode", "touchStrip2Mode":
-            guard let raw = ud.string(forKey: prefix + key) else { return nil }
+            guard let raw = value as? String else { return nil }
             return (TouchRingMode(rawValue: raw)?.displayLabel ?? raw, raw)
 
         case "pressureCurve":
-            guard let data = ud.data(forKey: prefix + key),
-                  let curve = try? JSONDecoder().decode(BezierCurve.self, from: data)
+            guard let data = value as? Data,
+                  let curve = try? decoder.decode(BezierCurve.self, from: data)
             else { return nil }
             return (exportCurve(curve), nil)
 
         case "touchRingSlotsJSON", "calibrationJSON":
-            guard let raw = ud.string(forKey: prefix + key) else { return nil }
+            guard let raw = value as? String else { return nil }
             return (raw, nil)
 
         case "touchRingActiveSlotIndex":
-            guard ud.object(forKey: prefix + key) != nil else { return nil }
-            return (ud.integer(forKey: prefix + key), nil)
+            guard let num = value as? NSNumber else { return nil }
+            return (num.intValue, nil)
 
         default:
             return nil

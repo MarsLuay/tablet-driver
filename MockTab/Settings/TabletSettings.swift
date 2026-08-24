@@ -51,6 +51,9 @@ let settingsLogger = Logger(subsystem: "com.cyzor.mocktab", category: "settings"
 @MainActor
 final class TabletSettings: ObservableObject {
 
+    private static let sharedJSONDecoder = JSONDecoder()
+    private static let sharedJSONEncoder = JSONEncoder()
+
     // MARK: - Per-device backing store
 
     /// Current UserDefaults key prefix, e.g. `"device-0x0357."`.
@@ -182,7 +185,7 @@ final class TabletSettings: ObservableObject {
                 calibrationLoadFailed = false
                 return []
             }
-            guard let entries = try? JSONDecoder().decode([CalibrationEntry].self, from: data)
+            guard let entries = try? TabletSettings.sharedJSONDecoder.decode([CalibrationEntry].self, from: data)
             else {
                 // Data exists but this build can't parse it — likely a newer
                 // version's format. Don't let a later save clobber it.
@@ -200,7 +203,7 @@ final class TabletSettings: ObservableObject {
             }
             if newValue.isEmpty {
                 calibrationJSON = ""
-            } else if let data = try? JSONEncoder().encode(newValue),
+            } else if let data = try? TabletSettings.sharedJSONEncoder.encode(newValue),
                       let str = String(data: data, encoding: .utf8) {
                 calibrationJSON = str
             }
@@ -514,7 +517,7 @@ final class TabletSettings: ObservableObject {
             let result: [ButtonBinding]
             if !expressKeyRaw.isEmpty,
                 let data = expressKeyRaw.data(using: .utf8),
-                let arr = try? JSONDecoder().decode([ButtonBinding].self, from: data)
+                let arr = try? TabletSettings.sharedJSONDecoder.decode([ButtonBinding].self, from: data)
             {
                 var r = arr
                 while r.count < 16 { r.append(.none) }
@@ -526,7 +529,7 @@ final class TabletSettings: ObservableObject {
             return result
         }
         set {
-            guard let data = try? JSONEncoder().encode(newValue),
+            guard let data = try? TabletSettings.sharedJSONEncoder.encode(newValue),
                 let s = String(data: data, encoding: .utf8)
             else { return }
             expressKeyRaw = s
@@ -543,7 +546,7 @@ final class TabletSettings: ObservableObject {
             let result: [ButtonBinding]
             if !bezelButtonRaw.isEmpty,
                 let data = bezelButtonRaw.data(using: .utf8),
-                let arr = try? JSONDecoder().decode([ButtonBinding].self, from: data)
+                let arr = try? TabletSettings.sharedJSONDecoder.decode([ButtonBinding].self, from: data)
             {
                 var r = arr
                 while r.count < 3 { r.append(.none) }
@@ -555,7 +558,7 @@ final class TabletSettings: ObservableObject {
             return result
         }
         set {
-            guard let data = try? JSONEncoder().encode(newValue),
+            guard let data = try? TabletSettings.sharedJSONEncoder.encode(newValue),
                 let s = String(data: data, encoding: .utf8)
             else { return }
             bezelButtonRaw = s

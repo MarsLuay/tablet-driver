@@ -376,6 +376,7 @@ struct ProfilesView: View {
     private static let exportDateFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
         return fmt
     }()
 

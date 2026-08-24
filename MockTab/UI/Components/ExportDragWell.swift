@@ -25,6 +25,23 @@ struct ExportDragWell: NSViewRepresentable {
     }
 }
 
+private struct ExportDateFormatterCache: @unchecked Sendable {
+    let formatter: DateFormatter
+
+    init() {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
+        self.formatter = fmt
+    }
+
+    func string(from date: Date) -> String {
+        return formatter.string(from: date)
+    }
+}
+
+private let sharedExportDateFormatter = ExportDateFormatterCache()
+
 @MainActor
 final class ExportWellNSView: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
     var generateJSON: (() -> Data?)?
@@ -206,9 +223,7 @@ final class ExportWellNSView: NSView, NSDraggingSource, NSFilePromiseProviderDel
         _ filePromiseProvider: NSFilePromiseProvider,
         fileNameForType fileType: String
     ) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd"
-        return "MockTab-\(fmt.string(from: Date())).json"
+        return "MockTab-\(sharedExportDateFormatter.string(from: Date())).json"
     }
 
     nonisolated func filePromiseProvider(

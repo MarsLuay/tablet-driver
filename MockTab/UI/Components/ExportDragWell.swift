@@ -31,6 +31,7 @@ private struct ExportDateFormatterCache: @unchecked Sendable {
     init() {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
         self.formatter = fmt
     }
 

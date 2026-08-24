@@ -787,6 +787,7 @@ final class AppMenuController: NSObject, NSMenuDelegate {
     private static let exportDateFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = .autoupdatingCurrent
         return fmt
     }()
 

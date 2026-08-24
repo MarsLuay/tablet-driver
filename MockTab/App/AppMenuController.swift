@@ -519,7 +519,6 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         // and window state.
         if let domain = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: domain)
-            UserDefaults.standard.synchronize()
         }
 
         // Also clear NSWindow autosave caches for window frames.  These are stored

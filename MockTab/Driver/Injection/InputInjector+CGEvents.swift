@@ -820,6 +820,12 @@ extension InputInjector {
             if let s = settings {
                 Task { @MainActor in s.touchRingActiveSlotIndex = target }
             }
+        case .ring2SelectSlot:
+            guard down else { break }
+            let target = min(Int(binding.keyCode), max(0, snapshot.touchRingSlots.count - 1))
+            if let s = settings {
+                Task { @MainActor in s.touchRing2ActiveSlotIndex = target }
+            }
         case .doubleClick:
             guard down else { break }
             for clickState in [1, 2] {

@@ -106,7 +106,7 @@ final class DeviceContext: ObservableObject, Identifiable {
     /// it never received them. Call once, right after the winner changes.
     func resyncActiveDriverDisplayState() {
         guard let device = tabletDevice else { return }
-        device.setRingLED(index: settings.touchRingActiveSlotIndex)
+        device.setRingLED(index: settings.touchRingActiveSlotIndex, index2: settings.touchRing2ActiveSlotIndex)
         if settings.displayBrightness >= 0 {
             device.setDisplayBrightness(settings.displayBrightness)
         }
@@ -243,11 +243,11 @@ final class DeviceContext: ObservableObject, Identifiable {
     /// Subscribe to ring slot changes so the physical LED tracks the active mode.
     /// Call this once after `tabletDevice` is assigned.
     func observeRingLED() {
-        settings.$touchRingActiveSlotIndex
-            .sink { [weak self] index in
+        Publishers.CombineLatest(settings.$touchRingActiveSlotIndex, settings.$touchRing2ActiveSlotIndex)
+            .sink { [weak self] index1, index2 in
                 guard let self else { return }
-                self.tabletDevice?.setRingLED(index: index)
-                self.pushDeviceDisplayState(activeSlotIndex: index)
+                self.tabletDevice?.setRingLED(index: index1, index2: index2)
+                self.pushDeviceDisplayState(activeSlotIndex: index1)
             }
             .store(in: &cancellables)
         // Panel brightness (Xencelabs pen displays). Fires once on subscribe,

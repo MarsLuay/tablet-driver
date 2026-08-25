@@ -39,8 +39,10 @@ extension InputInjector {
 
         let activeSlot: ControlSlot? = snap.touchRingSlots.indices.contains(snap.touchRingActiveSlotIndex)
             ? snap.touchRingSlots[snap.touchRingActiveSlotIndex] : nil
+        let activeSlot2: ControlSlot? = snap.touchRingSlots.indices.contains(snap.touchRing2ActiveSlotIndex)
+            ? snap.touchRingSlots[snap.touchRing2ActiveSlotIndex] : nil
 
-        injectTouchRings(buttons: buttons, activeSlot: activeSlot, snapshot: snap, cursorPos: cursorPos, settings: settings)
+        injectTouchRings(buttons: buttons, activeSlot: activeSlot, activeSlot2: activeSlot2, snapshot: snap, cursorPos: cursorPos, settings: settings)
         injectTouchStrips(buttons: buttons, activeSlot: activeSlot, snapshot: snap, cursorPos: cursorPos, settings: settings)
     }
 
@@ -97,7 +99,7 @@ extension InputInjector {
         }
     }
 
-    private func injectTouchRings(buttons: AuxButtons, activeSlot: ControlSlot?, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
+    private func injectTouchRings(buttons: AuxButtons, activeSlot: ControlSlot?, activeSlot2: ControlSlot?, snapshot snap: InjectionSnapshot, cursorPos: CGPoint, settings: TabletSettings?) {
         // ── Touch ring ─────────────────────────────────────────────────────────
         // Position 0x7F means no contact.  Compute a wrap-aware delta when a
         // finger is actively moving (both current and previous positions valid).
@@ -126,7 +128,7 @@ extension InputInjector {
             if delta > 36 { delta -= 72 }
             if delta < -36 { delta += 72 }
             if ringDeltaIsInverted { delta = -delta }
-            if delta != 0, let slot = activeSlot {
+            if delta != 0, let slot = activeSlot2 {
                 dispatchRingDelta(rawDelta: delta, slot: slot, accum: &ring2Accum,
                                   at: cursorPos, snapshot: snap, settings: settings)
             }

@@ -169,7 +169,7 @@ final class GenericHIDDigitizer: TabletDevice {
         selfRetain = nil
     }
 
-    func setRingLED(index: Int) {}  // Generic digitizers expose no LED control.
+    func setRingLED(index: Int, index2: Int? = nil) {}  // Generic digitizers expose no LED control.
 
     // MARK: - Value callback
 

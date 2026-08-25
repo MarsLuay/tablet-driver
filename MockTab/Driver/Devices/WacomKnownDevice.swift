@@ -102,6 +102,7 @@ final class WacomKnownDevice: TabletDevice {
     /// Last index requested via setRingLED. Applied immediately when ledDevice
     /// is registered so the LED syncs even if the companion connects after init.
     private var pendingLEDIndex: Int = 0
+    private var pendingLEDIndex2: Int? = nil
     /// Per-slot custom dial colors pushed from settings via setRingLEDColors
     /// (Xencelabs Quick Keys only). nil entries fall back to the factory palette.
     private var dialSlotColors: [(r: UInt8, g: UInt8, b: UInt8)?] = []
@@ -345,7 +346,7 @@ final class WacomKnownDevice: TabletDevice {
             sendWacomInputModeInit(device, tag: name)
             // Secondary interface just arrived — apply any LED slot that was requested
             // before it was available (mirrors the registerLEDDevice pattern).
-            setRingLED(index: pendingLEDIndex)
+            setRingLED(index: pendingLEDIndex, index2: pendingLEDIndex2)
         }
 
         // Xencelabs re-enumerates shortly after the initial connect (observed
@@ -360,7 +361,7 @@ final class WacomKnownDevice: TabletDevice {
             // superseded handle received. Re-apply the LED now; dropping the
             // text cache lets the next display push actually resend.
             xencelabsSentText.removeAll()
-            setRingLED(index: pendingLEDIndex)
+            setRingLED(index: pendingLEDIndex, index2: pendingLEDIndex2)
         }
     }
 
@@ -405,15 +406,16 @@ final class WacomKnownDevice: TabletDevice {
 
     /// Update the ring LED to reflect the active slot index.
     /// IntuosV2 (USB) and CintiqV1 families only — other families are no-ops.
-    func setRingLED(index: Int) {
+    func setRingLED(index: Int, index2: Int? = nil) {
         pendingLEDIndex = index
+        pendingLEDIndex2 = index2
         switch deviceSpec.parser {
         case .intuosV2 where !isBluetooth:
             setIntuosV2USBRingLED(index: index)
         case .intuosV2 where isBluetooth:
             setIntuosV2BTRingLED(index: index)
         case .cintiqV1:
-            setCintiqV1RingLED(index: index)
+            setCintiqV1RingLED(index: index, index2: index2)
         case .intuosV1:
             setIntuosV1RingLED(index: index)
         case .xencelabs:
@@ -469,7 +471,7 @@ final class WacomKnownDevice: TabletDevice {
                      tag: "\(name) BT LED ring slot=\(index)", log: logger)
     }
 
-    private func setCintiqV1RingLED(index: Int) {
+    private func setCintiqV1RingLED(index: Int, index2: Int?) {
         let name = deviceSpec.name
         // LED control via WAC_CMD_LED_CONTROL (0x20), 9-byte feature report.
         //
@@ -485,18 +487,14 @@ final class WacomKnownDevice: TabletDevice {
         // On DTK-2400 (0x00F4) the report descriptor declares 0x20 on the single
         // digitizer interface — ledCompanionPID 0x0056 does not appear on the bus.
         // Fall back to the primary device when ledDevice is absent.
-        //
-        // Both rings currently share touchRingActiveSlotIndex (single settings slot).
-        // Mirror the same slot to both rings so both LEDs track mode changes.
-        // TODO: independent left/right ring tracking requires touchRing2ActiveSlotIndex,
-        // new .ring2SelectSlot action type, and a second DeviceContext observer.
         let ledTarget = ledDevice ?? device
-        let slot = UInt8(index & 0x03)
+        let slotLeft = UInt8(index & 0x03)
+        let slotRight = UInt8((index2 ?? index) & 0x03)
         var buf = [UInt8](repeating: 0, count: 9)
         buf[0] = 0x20  // WAC_CMD_LED_CONTROL
-        buf[1] = 0x44 | slot | (slot << 4)  // mirror: both rings track same slot
+        buf[1] = 0x44 | slotRight | (slotLeft << 4)
         hidSetReport(ledTarget, reportID: CFIndex(buf[0]), bytes: &buf,
-                     tag: "\(name) CintiqV1 LED slot=\(slot) (both rings)", log: logger)
+                     tag: "\(name) CintiqV1 LED L=\(slotLeft) R=\(slotRight)", log: logger)
     }
 
     private func setIntuosV1RingLED(index: Int) {
@@ -597,7 +595,7 @@ final class WacomKnownDevice: TabletDevice {
             a?.r == b?.r && a?.g == b?.g && a?.b == b?.b
         }) else { return }
         dialSlotColors = colors
-        setRingLED(index: pendingLEDIndex)
+        setRingLED(index: pendingLEDIndex, index2: pendingLEDIndex2)
     }
 
     /// Show the active dial mode's name on the Quick Keys OLED mode line.
@@ -818,10 +816,11 @@ final class WacomKnownDevice: TabletDevice {
             sendXencelabsOutput([0x02, 0xB1, 0x0A, 0, 0, 0, 0, 0, 0, 0] + identity, tag: "OLED brightness poll")
         }
         let ledIndex = pendingLEDIndex
+        let ledIndex2 = pendingLEDIndex2
         let modeLabel = xencelabsSentText["mode"]
         let keysJoined = xencelabsSentText["keys"]
         xencelabsSentText.removeAll()
-        setRingLED(index: ledIndex)
+        setRingLED(index: ledIndex, index2: ledIndex2)
         if let modeLabel { setRingModeLabel(modeLabel) }
         if let keysJoined { setAuxKeyLabels(keysJoined.components(separatedBy: "\u{1F}")) }
     }
@@ -945,7 +944,7 @@ final class WacomKnownDevice: TabletDevice {
         ledDevice = device
         logger.info("\(self.deviceSpec.name, privacy: .public): LED companion interface registered (open ret=\(ret, privacy: .public))")
         // Apply any pending LED index that was requested before this interface arrived.
-        setRingLED(index: pendingLEDIndex)
+        setRingLED(index: pendingLEDIndex, index2: pendingLEDIndex2)
     }
 
     /// Re-runs the device's init sequence on demand — see the `TabletDevice`

@@ -107,6 +107,7 @@ final class DeviceRegistry: ObservableObject {
         let flag = "_placeholderSerialInstancesMerged"
         guard !ud.bool(forKey: flag) else { return }
 
+        let allKeys = ud.dictionaryRepresentation()
         for row in knownTablets {
             guard let instance = row.instance, !instance.isEmpty,
                 DeviceInstanceKey.isPlaceholderSerial(instance),
@@ -116,7 +117,7 @@ final class DeviceRegistry: ObservableObject {
             let pidHex = String(row.productID, radix: 16, uppercase: true)
             let oldPrefix = "device-0x\(pidHex)#\(instance)."
             let newPrefix = "device-0x\(pidHex)."
-            for (key, value) in ud.dictionaryRepresentation() where key.hasPrefix(oldPrefix) {
+            for (key, value) in allKeys where key.hasPrefix(oldPrefix) {
                 let target = newPrefix + key.dropFirst(oldPrefix.count)
                 if ud.object(forKey: target) == nil { ud.set(value, forKey: target) }
                 ud.removeObject(forKey: key)
@@ -141,7 +142,9 @@ final class DeviceRegistry: ObservableObject {
 
         let oldPrefix = "device-0x5203."
         let newPrefix = "device-0x5202."
-        for (key, value) in ud.dictionaryRepresentation() where key.hasPrefix(oldPrefix) {
+
+        let allKeys = ud.dictionaryRepresentation()
+        for (key, value) in allKeys where key.hasPrefix(oldPrefix) {
             let target = newPrefix + key.dropFirst(oldPrefix.count)
             if ud.object(forKey: target) == nil { ud.set(value, forKey: target) }
             ud.removeObject(forKey: key)
@@ -561,7 +564,8 @@ final class DeviceRegistry: ObservableObject {
 
         // Snapshot every device-scoped key
         var kv: [String: Data] = [:]
-        for (k, v) in ud.dictionaryRepresentation() where k.hasPrefix(prefix) {
+        let allKeys = ud.dictionaryRepresentation()
+        for (k, v) in allKeys where k.hasPrefix(prefix) {
             // We only persist via UserDefaults.set(Any) which stores plist-encodable values.
             // Use propertyList encoding so we can round-trip arbitrary value types.
             if let data = try? PropertyListSerialization.data(

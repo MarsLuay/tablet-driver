@@ -27,9 +27,10 @@ func hidSetReport(
     bytes: inout [UInt8],
     tag: String,
     severity: HIDSetReportSeverity = .required,
-    log: Logger
+    log: Logger,
+    setter: (IOHIDDevice, IOHIDReportType, CFIndex, UnsafePointer<UInt8>, CFIndex) -> IOReturn = IOHIDDeviceSetReport
 ) -> IOReturn {
-    let ret = IOHIDDeviceSetReport(device, type, reportID, &bytes, bytes.count)
+    let ret = setter(device, type, reportID, &bytes, bytes.count)
     if ret != kIOReturnSuccess {
         let hex = String(format: "0x%08x", ret)
         switch severity {

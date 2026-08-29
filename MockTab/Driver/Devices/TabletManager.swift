@@ -1143,9 +1143,10 @@ final class TabletManager: ObservableObject {
     }
 
     private func refreshConnectedIDs(mostRecent: Int?) {
-        connectedProductIDs = hidDeviceMap.values.map { $0.productID }.sorted()
+        let uniqueProductIDs = Set(hidDeviceMap.values.lazy.map { $0.productID })
+        connectedProductIDs = uniqueProductIDs.sorted()
         updateActivityAssertion()
-        if let pid = mostRecent, connectedProductIDs.contains(pid) {
+        if let pid = mostRecent, uniqueProductIDs.contains(pid) {
             connectedProductID = pid
         } else {
             connectedProductID = connectedProductIDs.last ?? 0

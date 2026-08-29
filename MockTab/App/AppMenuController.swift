@@ -663,9 +663,10 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         }
         // Prefer the pen-in-proximity unit; fall back to first connected,
         // then first ever-seen device.
+        let connectedProductIDsSet = Set(tm.connectedProductIDs)
         if let key = tm.activeContext?.instanceKey
             ?? DeviceRegistry.shared.knownTablets.first(where: {
-                tm.connectedProductIDs.contains($0.productID)
+                connectedProductIDsSet.contains($0.productID)
             })?.instanceKey
             ?? DeviceRegistry.shared.knownTablets.first?.instanceKey
         {

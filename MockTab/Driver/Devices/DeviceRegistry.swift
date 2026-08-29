@@ -85,6 +85,8 @@ final class DeviceRegistry: ObservableObject {
     /// nickname if the user has renamed it differently per device).
     @Published var allKnownTools: [KnownTool] = []
 
+    private var productIDCounts: [Int: Int] = [:]
+
     private let ud = UserDefaults.standard
 
     private init() {
@@ -122,6 +124,8 @@ final class DeviceRegistry: ObservableObject {
                 if ud.object(forKey: target) == nil { ud.set(value, forKey: target) }
                 ud.removeObject(forKey: key)
             }
+            let removedCount = knownTablets.filter { $0.productID == row.productID && $0.instance == instance }.count
+            productIDCounts[row.productID, default: 0] -= removedCount
             knownTablets.removeAll(where: { $0.productID == row.productID && $0.instance == instance })
         }
         saveTablets()
@@ -152,6 +156,7 @@ final class DeviceRegistry: ObservableObject {
 
         if let idx = knownTablets.firstIndex(where: { $0.productID == 0x5203 }) {
             let dongleRow = knownTablets.remove(at: idx)
+            productIDCounts[0x5203, default: 0] -= 1
             if !knownTablets.contains(where: { $0.productID == 0x5202 }) {
                 // The puck was only ever seen wirelessly — carry its row over
                 // under the canonical identity. Default nicknames follow the
@@ -167,6 +172,7 @@ final class DeviceRegistry: ObservableObject {
                         modelName: modelName,
                         usbSerial: dongleRow.usbSerial,
                         vendorID: dongleRow.vendorID))
+                productIDCounts[0x5202, default: 0] += 1
             }
             saveTablets()
         }
@@ -306,6 +312,7 @@ final class DeviceRegistry: ObservableObject {
                     modelName: modelName,
                     usbSerial: usbSerial,
                     vendorID: vendorID))
+            productIDCounts[productID, default: 0] += 1
             saveTablets()
         }
         loadTools(for: instanceKey)
@@ -578,12 +585,12 @@ final class DeviceRegistry: ObservableObject {
         // Snapshot serial-map entries pointing at this model. The map is
         // model-keyed (transport folding), so entries survive only while
         // another row of the same model remains.
-        let serialEntries = knownTablets.contains(where: {
-            $0.productID == tablet.productID && $0.id != id
-        }) ? [:] : hardwareSerialMap().filter { $0.value == tablet.productID }
+        let remaining = (productIDCounts[tablet.productID] ?? 0) - 1
+        let serialEntries = remaining > 0 ? [:] : hardwareSerialMap().filter { $0.value == tablet.productID }
 
         // Remove tablet entry
         knownTablets.remove(at: idx)
+        productIDCounts[tablet.productID, default: 0] -= 1
         saveTablets()
 
         // Remove device-scoped keys
@@ -609,6 +616,7 @@ final class DeviceRegistry: ObservableObject {
         // Restore tablet entry at its original position (clamp if list shrank elsewhere)
         let idx = min(snapshot.tabletIndex, knownTablets.count)
         knownTablets.insert(snapshot.tablet, at: idx)
+        productIDCounts[snapshot.tablet.productID, default: 0] += 1
         saveTablets()
 
         // Restore device-scoped keys
@@ -746,6 +754,11 @@ final class DeviceRegistry: ObservableObject {
             let list = try? JSONDecoder().decode([KnownTablet].self, from: data)
         else { return }
         knownTablets = list
+        var counts = [Int: Int]()
+        for tablet in list {
+            counts[tablet.productID, default: 0] += 1
+        }
+        productIDCounts = counts
         rebuildAllTools()
     }
 

@@ -86,6 +86,8 @@ struct DeviceInstanceClaims {
     var onClaim: ((_ pidHex: String) -> Void)?
 
     private static let claimsKey = "_instanceClaims"
+    private static let decoder = JSONDecoder()
+    private static let encoder = JSONEncoder()
 
     /// Resolves the UserDefaults settings prefix for one physical device
     /// instance: the first instance ever seen for a PID permanently claims
@@ -135,13 +137,13 @@ struct DeviceInstanceClaims {
 
     private func claimMap() -> [String: String] {
         guard let data = ud.data(forKey: Self.claimsKey),
-            let map = try? JSONDecoder().decode([String: String].self, from: data)
+            let map = try? Self.decoder.decode([String: String].self, from: data)
         else { return [:] }
         return map
     }
 
     private func save(_ map: [String: String]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
+        guard let data = try? Self.encoder.encode(map) else { return }
         ud.set(data, forKey: Self.claimsKey)
     }
 }

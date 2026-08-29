@@ -1,23 +1,19 @@
 import Foundation
 
-func measure(name: String, _ block: () -> Void) {
-    let start = CFAbsoluteTimeGetCurrent()
-    for _ in 0..<10000 {
-        block()
+// We will compile this against DeviceInstanceKey.swift
+@main
+enum Benchmark {
+    static func main() {
+        let ud = UserDefaults(suiteName: "benchmark")!
+        ud.removePersistentDomain(forName: "benchmark")
+        var claims = DeviceInstanceClaims(ud: ud)
+
+        let start = CFAbsoluteTimeGetCurrent()
+        for i in 0..<10000 {
+            let key = DeviceInstanceKey(productID: i % 1000, instance: "instance-\(i)")
+            _ = claims.settingsPrefix(for: key)
+        }
+        let end = CFAbsoluteTimeGetCurrent()
+        print("Elapsed time: \(end - start) seconds")
     }
-    let end = CFAbsoluteTimeGetCurrent()
-    print("\(name): \(String(format: "%.4f", end - start)) seconds")
 }
-
-func localFormatter() -> String {
-    let iso = ISO8601DateFormatter()
-    return iso.string(from: Date())
-}
-
-let staticISO = ISO8601DateFormatter()
-func staticFormatter() -> String {
-    return staticISO.string(from: Date())
-}
-
-measure(name: "Local Formatter", { _ = localFormatter() })
-measure(name: "Static Formatter", { _ = staticFormatter() })

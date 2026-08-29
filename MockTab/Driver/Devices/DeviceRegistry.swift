@@ -108,10 +108,12 @@ final class DeviceRegistry: ObservableObject {
         guard !ud.bool(forKey: flag) else { return }
 
         let allKeys = ud.dictionaryRepresentation()
+        let emptyInstancePIDs = Set(knownTablets.filter { ($0.instance ?? "").isEmpty }.map { $0.productID })
+
         for row in knownTablets {
             guard let instance = row.instance, !instance.isEmpty,
                 DeviceInstanceKey.isPlaceholderSerial(instance),
-                knownTablets.contains(where: { $0.productID == row.productID && ($0.instance ?? "").isEmpty })
+                emptyInstancePIDs.contains(row.productID)
             else { continue }
 
             let pidHex = String(row.productID, radix: 16, uppercase: true)
@@ -152,7 +154,8 @@ final class DeviceRegistry: ObservableObject {
 
         if let idx = knownTablets.firstIndex(where: { $0.productID == 0x5203 }) {
             let dongleRow = knownTablets.remove(at: idx)
-            if !knownTablets.contains(where: { $0.productID == 0x5202 }) {
+            let hasWired = knownTablets.contains(where: { $0.productID == 0x5202 })
+            if !hasWired {
                 // The puck was only ever seen wirelessly — carry its row over
                 // under the canonical identity. Default nicknames follow the
                 // model name; a custom one is kept.
@@ -294,9 +297,12 @@ final class DeviceRegistry: ObservableObject {
             // disambiguator so the Devices list and menus stay tellable
             // apart (short serial tail when available).
             var nickname = modelName
-            if rowInst != nil, knownTablets.contains(where: { $0.modelName == modelName }) {
-                let tail = (usbSerial?.suffix(4)).map(String.init) ?? "2"
-                nickname = "\(modelName) (\(tail))"
+            if rowInst != nil {
+                let hasSameModel = knownTablets.contains(where: { $0.modelName == modelName })
+                if hasSameModel {
+                    let tail = (usbSerial?.suffix(4)).map(String.init) ?? "2"
+                    nickname = "\(modelName) (\(tail))"
+                }
             }
             knownTablets.append(
                 KnownTablet(
@@ -369,7 +375,8 @@ final class DeviceRegistry: ObservableObject {
         if identity.serial == 0 {
             let baseID = toolID
             var counter = 1
-            while knownTools.contains(where: { $0.id == toolID }) {
+            let existingToolIDs = Set(knownTools.map { $0.id })
+            while existingToolIDs.contains(toolID) {
                 toolID = "\(baseID)-\(counter)"
                 counter += 1
             }
@@ -578,9 +585,10 @@ final class DeviceRegistry: ObservableObject {
         // Snapshot serial-map entries pointing at this model. The map is
         // model-keyed (transport folding), so entries survive only while
         // another row of the same model remains.
-        let serialEntries = knownTablets.contains(where: {
+        let hasOtherInstances = knownTablets.contains(where: {
             $0.productID == tablet.productID && $0.id != id
-        }) ? [:] : hardwareSerialMap().filter { $0.value == tablet.productID }
+        })
+        let serialEntries = hasOtherInstances ? [:] : hardwareSerialMap().filter { $0.value == tablet.productID }
 
         // Remove tablet entry
         knownTablets.remove(at: idx)

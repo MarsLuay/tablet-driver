@@ -79,6 +79,7 @@ final class DeviceRegistry: ObservableObject {
     }
 
     @Published var knownTablets: [KnownTablet] = []
+    private var knownModelNames: Set<String> = []
     @Published var knownTools: [KnownTool] = []
     /// All tools seen across every known tablet, deduplicated by tool ID.
     /// A pen used on multiple tablets appears once (first tablet wins for
@@ -86,6 +87,10 @@ final class DeviceRegistry: ObservableObject {
     @Published var allKnownTools: [KnownTool] = []
 
     private let ud = UserDefaults.standard
+
+    private func rebuildKnownModelNames() {
+        knownModelNames = Set(knownTablets.map(\.modelName))
+    }
 
     private init() {
         loadTablets()
@@ -123,6 +128,7 @@ final class DeviceRegistry: ObservableObject {
                 ud.removeObject(forKey: key)
             }
             knownTablets.removeAll(where: { $0.productID == row.productID && $0.instance == instance })
+            rebuildKnownModelNames()
         }
         saveTablets()
         ud.set(true, forKey: flag)
@@ -168,6 +174,7 @@ final class DeviceRegistry: ObservableObject {
                         usbSerial: dongleRow.usbSerial,
                         vendorID: dongleRow.vendorID))
             }
+            rebuildKnownModelNames()
             saveTablets()
         }
 
@@ -294,7 +301,7 @@ final class DeviceRegistry: ObservableObject {
             // disambiguator so the Devices list and menus stay tellable
             // apart (short serial tail when available).
             var nickname = modelName
-            if rowInst != nil, knownTablets.contains(where: { $0.modelName == modelName }) {
+            if rowInst != nil, knownModelNames.contains(modelName) {
                 let tail = (usbSerial?.suffix(4)).map(String.init) ?? "2"
                 nickname = "\(modelName) (\(tail))"
             }
@@ -306,6 +313,7 @@ final class DeviceRegistry: ObservableObject {
                     modelName: modelName,
                     usbSerial: usbSerial,
                     vendorID: vendorID))
+            knownModelNames.insert(modelName)
             saveTablets()
         }
         loadTools(for: instanceKey)
@@ -584,6 +592,7 @@ final class DeviceRegistry: ObservableObject {
 
         // Remove tablet entry
         knownTablets.remove(at: idx)
+        rebuildKnownModelNames()
         saveTablets()
 
         // Remove device-scoped keys
@@ -609,6 +618,7 @@ final class DeviceRegistry: ObservableObject {
         // Restore tablet entry at its original position (clamp if list shrank elsewhere)
         let idx = min(snapshot.tabletIndex, knownTablets.count)
         knownTablets.insert(snapshot.tablet, at: idx)
+        rebuildKnownModelNames()
         saveTablets()
 
         // Restore device-scoped keys
@@ -746,6 +756,7 @@ final class DeviceRegistry: ObservableObject {
             let list = try? JSONDecoder().decode([KnownTablet].self, from: data)
         else { return }
         knownTablets = list
+        rebuildKnownModelNames()
         rebuildAllTools()
     }
 

@@ -599,6 +599,8 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         if !registry.knownTablets.isEmpty {
             menu.addItem(.separator())
 
+            let connectedPIDs = Set(tm.connectedProductIDs)
+
             for tablet in registry.knownTablets {
                 // A companion peripheral (Xencelabs Quick Keys puck/dongle)
                 // is folded into its owning tablet's window while connected —
@@ -608,7 +610,7 @@ final class AppMenuController: NSObject, NSMenuDelegate {
                 {
                     continue
                 }
-                let connected = tm.connectedProductIDs.contains(tablet.productID)
+                let connected = connectedPIDs.contains(tablet.productID)
                 let suffix = connected ? (tm.context(for: tablet)?.batteryMenuSuffix ?? "") : ""
                 let label = SettingsWindowManager.shared.menuLabel(forKey: tablet.instanceKey) + suffix
                 let item = NSMenuItem(

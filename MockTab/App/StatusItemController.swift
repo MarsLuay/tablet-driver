@@ -80,6 +80,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let knownTablets = DeviceRegistry.shared.knownTablets
         if !knownTablets.isEmpty {
             menu.addItem(.separator())
+            let connectedIDsSet = Set(tm.connectedProductIDs)
             for tablet in knownTablets {
                 // A companion peripheral (Xencelabs Quick Keys puck/dongle)
                 // is folded into its owning tablet's window while connected —
@@ -89,7 +90,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 {
                     continue
                 }
-                let connected = tm.connectedProductIDs.contains(tablet.productID)
+                let connected = connectedIDsSet.contains(tablet.productID)
                 let suffix = connected ? (tm.context(for: tablet)?.batteryMenuSuffix ?? "") : ""
                 let item = NSMenuItem(title: pwc.menuLabel(forKey: tablet.instanceKey) + suffix,
                                        action: #selector(openTablet(_:)), keyEquivalent: "")

@@ -61,8 +61,9 @@ struct DevicesView: View {
         // (re)enumerated last, which can be the puck during a USB blip. Using it
         // let the puck hijack the auto-selection and blank the Tools section
         // even while the pen display was connected.
+        let connectedSet = Set(tabletManager.connectedProductIDs)
         let connected = registry.knownTablets.filter {
-            tabletManager.connectedProductIDs.contains($0.productID)
+            connectedSet.contains($0.productID)
         }
         if let penBearing = connected.first(where: { !isPuckKind(forProductID: $0.productID) }) {
             return penBearing.id
@@ -169,12 +170,13 @@ struct DevicesView: View {
     // MARK: - Tablets
 
     private var tabletsSection: some View {
-        Section {
+        let connectedSet = Set(tabletManager.connectedProductIDs)
+        return Section {
             if registry.knownTablets.isEmpty {
                 emptyState(String(localized: "No tablets have been connected yet.", comment: "Empty state message when no tablets have been detected"))
             } else {
                 ForEach(registry.knownTablets) { tablet in
-                    tabletRow(tablet)
+                    tabletRow(tablet, isActive: connectedSet.contains(tablet.productID))
                 }
             }
         } header: {
@@ -183,8 +185,7 @@ struct DevicesView: View {
     }
 
     @ViewBuilder
-    private func tabletRow(_ tablet: DeviceRegistry.KnownTablet) -> some View {
-        let isActive = tabletManager.connectedProductIDs.contains(tablet.productID)
+    private func tabletRow(_ tablet: DeviceRegistry.KnownTablet, isActive: Bool) -> some View {
         let isSelected = effectiveTabletID == tablet.id
 
         HStack(spacing: 8) {

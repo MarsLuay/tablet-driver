@@ -108,10 +108,9 @@ final class DeviceRegistry: ObservableObject {
         guard !ud.bool(forKey: flag) else { return }
 
         let allKeys = ud.dictionaryRepresentation()
-        for row in knownTablets {
+        for row in Array(knownTablets) {
             guard let instance = row.instance, !instance.isEmpty,
-                DeviceInstanceKey.isPlaceholderSerial(instance),
-                knownTablets.contains(where: { $0.productID == row.productID && ($0.instance ?? "").isEmpty })
+                DeviceInstanceKey.isPlaceholderSerial(instance)
             else { continue }
 
             let pidHex = String(row.productID, radix: 16, uppercase: true)
@@ -122,7 +121,12 @@ final class DeviceRegistry: ObservableObject {
                 if ud.object(forKey: target) == nil { ud.set(value, forKey: target) }
                 ud.removeObject(forKey: key)
             }
-            knownTablets.removeAll(where: { $0.productID == row.productID && $0.instance == instance })
+
+            if knownTablets.contains(where: { $0.productID == row.productID && ($0.instance ?? "").isEmpty }) {
+                knownTablets.removeAll(where: { $0.productID == row.productID && $0.instance == instance })
+            } else if let idx = knownTablets.firstIndex(where: { $0.productID == row.productID && $0.instance == instance }) {
+                knownTablets[idx].instance = ""
+            }
         }
         saveTablets()
         ud.set(true, forKey: flag)

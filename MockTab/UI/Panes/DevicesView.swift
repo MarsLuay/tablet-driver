@@ -61,8 +61,9 @@ struct DevicesView: View {
         // (re)enumerated last, which can be the puck during a USB blip. Using it
         // let the puck hijack the auto-selection and blank the Tools section
         // even while the pen display was connected.
+        let connectedProductIDs = Set(tabletManager.connectedProductIDs)
         let connected = registry.knownTablets.filter {
-            tabletManager.connectedProductIDs.contains($0.productID)
+            connectedProductIDs.contains($0.productID)
         }
         if let penBearing = connected.first(where: { !isPuckKind(forProductID: $0.productID) }) {
             return penBearing.id

@@ -51,8 +51,8 @@ let settingsLogger = Logger(subsystem: "com.cyzor.mocktab", category: "settings"
 @MainActor
 final class TabletSettings: ObservableObject {
 
-    private static let sharedJSONDecoder = JSONDecoder()
-    private static let sharedJSONEncoder = JSONEncoder()
+    static let sharedJSONDecoder = JSONDecoder()
+    static let sharedJSONEncoder = JSONEncoder()
 
     // MARK: - Per-device backing store
 

@@ -357,7 +357,7 @@ extension TabletSettings {
             settingsLogger.error("Refusing to save app overrides: last load couldn't parse existing data")
             return
         }
-        guard let data = try? JSONEncoder().encode(appOverrides) else { return }
+        guard let data = try? TabletSettings.sharedJSONEncoder.encode(appOverrides) else { return }
         ud.set(data, forKey: appOverridesKey)
     }
 
@@ -367,7 +367,7 @@ extension TabletSettings {
             appOverrides = []
             return
         }
-        guard let list = try? JSONDecoder().decode([AppOverride].self, from: data) else {
+        guard let list = try? TabletSettings.sharedJSONDecoder.decode([AppOverride].self, from: data) else {
             // Data exists but this build can't parse it — likely a newer
             // version's format. Don't let a later save clobber it.
             appOverridesLoadFailed = true
@@ -388,7 +388,7 @@ extension TabletSettings {
             settingsLogger.error("Refusing to save app bindings: last load couldn't parse existing data")
             return
         }
-        guard let data = try? JSONEncoder().encode(appBindings) else { return }
+        guard let data = try? TabletSettings.sharedJSONEncoder.encode(appBindings) else { return }
         ud.set(data, forKey: appBindingsKey)
     }
 
@@ -398,7 +398,7 @@ extension TabletSettings {
             appBindings = []
             return
         }
-        guard let list = try? JSONDecoder().decode([AppProfileBinding].self, from: data) else {
+        guard let list = try? TabletSettings.sharedJSONDecoder.decode([AppProfileBinding].self, from: data) else {
             // Data exists but this build can't parse it — likely a newer
             // version's format. Don't let a later save clobber it.
             appBindingsLoadFailed = true

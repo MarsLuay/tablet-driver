@@ -194,7 +194,7 @@ extension TabletSettings {
             settingsLogger.error("Refusing to save pressureCurve: last load couldn't parse existing data")
             return
         }
-        guard let data = try? JSONEncoder().encode(pressureCurve) else { return }
+        guard let data = try? TabletSettings.sharedJSONEncoder.encode(pressureCurve) else { return }
         if var override = activeAppOverride {
             ud.set(data, forKey: appOverrideKeyPrefix(override) + "pressureCurve")
             guard !override.overriddenKeys.contains("pressureCurve") else { return }
@@ -239,7 +239,7 @@ extension TabletSettings {
             pressureCurveLoadFailed = false
             return
         }
-        guard let curve = try? JSONDecoder().decode(BezierCurve.self, from: data) else {
+        guard let curve = try? TabletSettings.sharedJSONDecoder.decode(BezierCurve.self, from: data) else {
             // Data exists but this build can't parse it — likely a newer
             // version's format. Don't let a later save clobber it.
             pressureCurveLoadFailed = true
@@ -259,7 +259,7 @@ extension TabletSettings {
             settingsLogger.error("Refusing to save touchRingSlots: last load couldn't parse existing data")
             return
         }
-        guard let data = try? JSONEncoder().encode(touchRingSlots) else { return }
+        guard let data = try? TabletSettings.sharedJSONEncoder.encode(touchRingSlots) else { return }
         if var override = activeAppOverride {
             ud.set(data, forKey: appOverrideKeyPrefix(override) + "touchRingSlotsJSON")
             guard !override.overriddenKeys.contains("touchRingSlotsJSON") else { return }
@@ -296,7 +296,7 @@ extension TabletSettings {
         }
 
         if let data {
-            guard let slots = try? JSONDecoder().decode([ControlSlot].self, from: data) else {
+            guard let slots = try? TabletSettings.sharedJSONDecoder.decode([ControlSlot].self, from: data) else {
                 // Data exists but this build can't parse it — likely a newer
                 // version's format. Don't let a later save clobber it.
                 touchRingSlotsLoadFailed = true

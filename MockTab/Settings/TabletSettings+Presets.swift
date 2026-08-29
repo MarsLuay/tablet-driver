@@ -50,11 +50,11 @@ extension TabletSettings {
         ud.set(expressKeyRaw, forKey: prefix + "expressKeyBindings")
         ud.set(bezelButtonRaw, forKey: prefix + "bezelButtonBindings")
         ud.set(touchRingButtonRaw, forKey: prefix + "touchRingButtonBinding")
-        if let data = try? JSONEncoder().encode(touchRingSlots) {
+        if let data = try? TabletSettings.sharedJSONEncoder.encode(touchRingSlots) {
             ud.set(data, forKey: prefix + "touchRingSlotsJSON")
         }
         ud.set(touchRingActiveSlotIndex, forKey: prefix + "touchRingActiveSlotIndex")
-        if let data = try? JSONEncoder().encode(pressureCurve) {
+        if let data = try? TabletSettings.sharedJSONEncoder.encode(pressureCurve) {
             ud.set(data, forKey: prefix + "pressureCurve")
         }
         ud.set(calibrationJSON, forKey: prefix + "calibrationJSON")
@@ -275,7 +275,7 @@ extension TabletSettings {
             activeProfile = nil
             return
         }
-        guard let list = try? JSONDecoder().decode([Profile].self, from: data) else {
+        guard let list = try? TabletSettings.sharedJSONDecoder.decode([Profile].self, from: data) else {
             // Data exists but this build can't parse it — likely a newer
             // version's format. Don't let a later save clobber it.
             profileListLoadFailed = true
@@ -301,7 +301,7 @@ extension TabletSettings {
             settingsLogger.error("Refusing to save profile list: last load couldn't parse existing data")
             return
         }
-        guard let data = try? JSONEncoder().encode(profiles) else { return }
+        guard let data = try? TabletSettings.sharedJSONEncoder.encode(profiles) else { return }
         ud.set(data, forKey: profileListKey)
     }
 

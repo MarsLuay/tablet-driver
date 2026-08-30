@@ -44,13 +44,14 @@ struct PresetImporter {
             throw ParseError.noTablets
         }
 
+        let knownProductIDs = Set(registry.knownTablets.map { $0.productID })
         var entries: [ImportPlan.TabletEntry] = []
         for tabletDict in tabletsRaw {
             guard let pidStr = tabletDict["productID"] as? String,
                   let pid = Int(pidStr.dropFirst(2), radix: 16) else { continue }
             let modelName = tabletDict["modelName"] as? String ?? pidStr
             let nickname = tabletDict["nickname"] as? String ?? modelName
-            let isKnown = registry.knownTablets.contains { $0.productID == pid }
+            let isKnown = knownProductIDs.contains(pid)
 
             var values: [String: Any] = [:]
             if let s = tabletDict["settings"] as? [String: Any] {

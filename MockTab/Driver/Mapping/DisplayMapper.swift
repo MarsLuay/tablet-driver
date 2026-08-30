@@ -441,7 +441,8 @@ struct DisplayMapper {
     ) -> [CGDirectDisplayID] {
         let stored = snapshot.toggleDisplayIDs
         if stored.isEmpty { return allIDs }
-        return allIDs.filter { stored.contains($0) }
+        let storedSet = Set(stored)
+        return allIDs.filter { storedSet.contains($0) }
     }
 
     /// Advances the toggle rotation to the next display in the sequence.

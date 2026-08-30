@@ -372,7 +372,8 @@ final class DeviceRegistry: ObservableObject {
         if identity.serial == 0 {
             let baseID = toolID
             var counter = 1
-            while knownTools.contains(where: { $0.id == toolID }) {
+            let existingToolIDs = Set(knownTools.map { $0.id })
+            while existingToolIDs.contains(toolID) {
                 toolID = "\(baseID)-\(counter)"
                 counter += 1
             }

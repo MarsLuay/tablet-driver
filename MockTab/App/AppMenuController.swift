@@ -5,6 +5,8 @@
 import AppKit
 import TabletKit
 import UniformTypeIdentifiers
+import OSLog
+import Security
 
 /// Standard responder-chain actions that have no public `#selector`-able
 /// declaration in AppKit. NSWindow handles both by forwarding to the first
@@ -530,9 +532,33 @@ final class AppMenuController: NSObject, NSMenuDelegate {
         // Relaunch so the new instance reads factory defaults rather than the
         // stale in-memory @Published / @AppStorage state from this session.
         // We use NSWorkspace to spawn a new instance to replace this one.
+
+        let bundleURL = Bundle.main.bundleURL
+
+        // Security: verify the code signature of the on-disk bundle matches our running process
+        // before launching it. This prevents a local attacker from replacing the bundle on disk
+        // between our launch and restart, which would lead to arbitrary code execution with our
+        // application's privileges.
+        var staticCode: SecStaticCode?
+        var selfCode: SecCode?
+        var requirement: SecRequirement?
+
+        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode = staticCode,
+              SecCodeCopySelf(SecCSFlags(rawValue: 0), &selfCode) == errSecSuccess,
+              let selfCode = selfCode,
+              SecCodeCopyDesignatedRequirement(selfCode, SecCSFlags(rawValue: 0), &requirement) == errSecSuccess,
+              let requirement = requirement,
+              SecStaticCodeCheckValidity(staticCode, SecCSFlags(rawValue: 0), requirement) == errSecSuccess else {
+            let log = Logger(subsystem: "com.cyzor.mocktab", category: "security")
+            log.fault("Refusing to relaunch: on-disk bundle signature does not match running process")
+            NSApp.terminate(nil)
+            return
+        }
+
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+        NSWorkspace.shared.openApplication(at: bundleURL,
                                            configuration: configuration,
                                            completionHandler: nil)
         NSApp.terminate(nil)

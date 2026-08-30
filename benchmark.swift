@@ -1,25 +1,23 @@
 import Foundation
 
-// Assuming we can mock or just time the array vs set approach
-let knownTabletsCount = 500
-let connectedTablets = [100, 200, 300, 400]
-
-let startArray = CFAbsoluteTimeGetCurrent()
-for i in 0..<10000 {
-    for j in 0..<knownTabletsCount {
-        let connected = connectedTablets.contains(j)
+func measure(name: String, _ block: () -> Void) {
+    let start = CFAbsoluteTimeGetCurrent()
+    for _ in 0..<10000 {
+        block()
     }
+    let end = CFAbsoluteTimeGetCurrent()
+    print("\(name): \(String(format: "%.4f", end - start)) seconds")
 }
-let timeArray = CFAbsoluteTimeGetCurrent() - startArray
 
-let startSet = CFAbsoluteTimeGetCurrent()
-for i in 0..<10000 {
-    let connectedSet = Set(connectedTablets)
-    for j in 0..<knownTabletsCount {
-        let connected = connectedSet.contains(j)
-    }
+func localFormatter() -> String {
+    let iso = ISO8601DateFormatter()
+    return iso.string(from: Date())
 }
-let timeSet = CFAbsoluteTimeGetCurrent() - startSet
 
-print("Array time: \(timeArray)")
-print("Set time:   \(timeSet)")
+let staticISO = ISO8601DateFormatter()
+func staticFormatter() -> String {
+    return staticISO.string(from: Date())
+}
+
+measure(name: "Local Formatter", { _ = localFormatter() })
+measure(name: "Static Formatter", { _ = staticFormatter() })

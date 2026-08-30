@@ -110,10 +110,11 @@ final class DeviceRegistry: ObservableObject {
         guard !ud.bool(forKey: flag) else { return }
 
         let allKeys = ud.dictionaryRepresentation()
+        let emptyInstancePIDs = Set(knownTablets.lazy.filter { ($0.instance ?? "").isEmpty }.map { $0.productID })
         for row in knownTablets {
             guard let instance = row.instance, !instance.isEmpty,
                 DeviceInstanceKey.isPlaceholderSerial(instance),
-                knownTablets.contains(where: { $0.productID == row.productID && ($0.instance ?? "").isEmpty })
+                emptyInstancePIDs.contains(row.productID)
             else { continue }
 
             let pidHex = String(row.productID, radix: 16, uppercase: true)

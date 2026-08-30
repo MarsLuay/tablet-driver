@@ -919,12 +919,21 @@ final class WacomKnownDevice: TabletDevice {
     }
 
     /// Enable or disable capacitive finger touch on the hardware.
+    ///
+    /// Wacom touch-capable devices accept a feature report (Linux notes cite
+    /// Report ID 0x0A with `[0, 0, 0, 1]` to enable, `[0, 0, 0, 0]` to
+    /// disable), but the exact bytes have not been verified against a real
+    /// macOS-shipped DTH-* device.  Until a capture confirms the wire
+    /// format this method only logs the request — the in-app `touchEnabled`
+    /// setting still gates `InputInjector.injectTouch`, so users can turn
+    /// touch off without any hardware cooperation.
+    ///
+    /// TODO: once a real capture confirms the feature-report bytes for one
+    /// of DTH-271 / DTH-135 / DTH-1320 / DTH-2400 / DTH-2200, populate the
+    /// payload below and remove the early-return log.
     func setTouchEnabled(_ enabled: Bool) {
         guard deviceSpec.hasFingerTouch else { return }
-        var bytes: [UInt8] = [0x0A, 0x00, 0x00, 0x00, enabled ? 1 : 0]
-        hidSetReport(device, reportID: CFIndex(bytes[0]), bytes: &bytes,
-                     tag: "\(deviceSpec.name) setTouchEnabled(\(enabled))",
-                     severity: .bestEffort, log: logger)
+        logger.info("\(self.deviceSpec.name, privacy: .public): setTouchEnabled(\(enabled, privacy: .public)) requested — hardware feature-report unverified, in-app touchEnabled gate is authoritative")
     }
 
     /// Register the companion LED controller interface for this device.

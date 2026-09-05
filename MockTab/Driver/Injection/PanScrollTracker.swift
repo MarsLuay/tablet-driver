@@ -112,7 +112,7 @@ struct PanScrollTracker {
     /// like Illustrator or Rebelle) never crosses the ratio and stays
     /// omnidirectional for the whole gesture. This is what lets one behavior
     /// serve both cases without a user-facing setting.
-    private enum Axis { case vertical, horizontal }
+    private enum Axis { case vertical, horizontal, none }
     private var axisLock: Axis?
     private var preLockAccumX = 0.0
     private var preLockAccumY = 0.0
@@ -216,6 +216,7 @@ struct PanScrollTracker {
             switch axisLock {
             case .vertical: dx = 0
             case .horizontal: dy = 0
+            case .none: break
             }
         } else {
             preLockAccumX += abs(dx)
@@ -229,10 +230,12 @@ struct PanScrollTracker {
                 } else if preLockAccumY >= preLockAccumX * ratio {
                     axisLock = .vertical
                     dx = 0
+                } else {
+                    // Neither axis dominates enough (a genuinely diagonal drag):
+                    // give up on locking for the rest of this gesture and stay
+                    // omnidirectional, the way a native Hand tool would.
+                    axisLock = .none
                 }
-                // Neither axis dominates enough (a genuinely diagonal drag):
-                // give up on locking for the rest of this gesture and stay
-                // omnidirectional, the way a native Hand tool would.
             }
         }
 

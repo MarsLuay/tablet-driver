@@ -129,6 +129,117 @@ private func testVelocity() {
     expectEqual(tracker.releaseVelocity.dy, 0, "dy velocity should be 0")
 }
 
+private func testReverseScrolling() {
+    var tracker = PanScrollTracker()
+    _ = tracker.engage(reverse: true)
+
+    _ = tracker.process(screen: CGPoint(x: 10, y: 10), dt: 0.008)
+
+    let intent = tracker.process(screen: CGPoint(x: 20, y: 30), dt: 0.008)
+    if case .scroll(let dx, let dy, _) = intent {
+        expect(dx < 0, "dx should be negative due to reverse scrolling")
+        expect(dy < 0, "dy should be negative due to reverse scrolling")
+    } else {
+        expect(false, "expected scroll intent")
+    }
+}
+
+private func testSpeedMultiplier() {
+    var tracker1 = PanScrollTracker()
+    _ = tracker1.engage(reverse: false, speed: 1.0)
+    _ = tracker1.process(screen: CGPoint(x: 10, y: 10), dt: 0.008)
+
+    let intent1 = tracker1.process(screen: CGPoint(x: 20, y: 30), dt: 0.008)
+    var dx1 = 0.0
+    var dy1 = 0.0
+    if case .scroll(let dx, let dy, _) = intent1 {
+        dx1 = dx
+        dy1 = dy
+    }
+
+    var tracker2 = PanScrollTracker()
+    _ = tracker2.engage(reverse: false, speed: 2.0)
+    _ = tracker2.process(screen: CGPoint(x: 10, y: 10), dt: 0.008)
+
+    let intent2 = tracker2.process(screen: CGPoint(x: 20, y: 30), dt: 0.008)
+    var dx2 = 0.0
+    var dy2 = 0.0
+    if case .scroll(let dx, let dy, _) = intent2 {
+        dx2 = dx
+        dy2 = dy
+    }
+
+    expect(dx2 > dx1, "multiplied speed should result in larger dx")
+    expect(dy2 > dy1, "multiplied speed should result in larger dy")
+}
+
+private func testAxisLockVertical() {
+    var tracker = PanScrollTracker()
+    _ = tracker.engage(reverse: false)
+
+    _ = tracker.process(screen: CGPoint(x: 10, y: 10), dt: 0.008)
+
+    // Move mostly vertically to trigger vertical lock
+    // Needs >= 26 points of travel and 2:1 ratio
+    var intent: PanScrollTracker.Intent = .none
+    for i in 1...30 {
+        intent = tracker.process(screen: CGPoint(x: 10, y: 10 + Double(i)), dt: 0.008)
+    }
+
+    // Once locked vertical, a horizontal motion shouldn't produce dx
+    intent = tracker.process(screen: CGPoint(x: 40, y: 50), dt: 0.008)
+    if case .scroll(let dx, let dy, _) = intent {
+        expect(dx == 0, "dx should be 0 due to vertical lock")
+    } else {
+        expect(false, "expected scroll intent")
+    }
+}
+
+private func testAxisLockGiveUp() {
+    var tracker = PanScrollTracker()
+    _ = tracker.engage(reverse: false)
+
+    _ = tracker.process(screen: CGPoint(x: 10, y: 10), dt: 0.008)
+
+    // Move diagonally in equal amounts so neither axis dominates (1:1 ratio)
+    // Needs >= 26 points of travel to exceed the window and give up on locking
+    var intent: PanScrollTracker.Intent = .none
+    for i in 1...30 {
+        intent = tracker.process(screen: CGPoint(x: 10 + Double(i), y: 10 + Double(i)), dt: 0.008)
+    }
+
+    // Once giving up on locking, motion should produce both dx and dy
+    intent = tracker.process(screen: CGPoint(x: 50, y: 60), dt: 0.008)
+    if case .scroll(let dx, let dy, _) = intent {
+        expect(dx != 0, "dx should be non-zero because lock was abandoned")
+        expect(dy != 0, "dy should be non-zero because lock was abandoned")
+    } else {
+        expect(false, "expected scroll intent")
+    }
+}
+
+private func testVelocityDecay() {
+    var tracker = PanScrollTracker()
+    _ = tracker.engage(reverse: false)
+    _ = tracker.process(screen: CGPoint(x: 0, y: 0), dt: 0.01)
+
+    // Rapid motion
+    _ = tracker.process(screen: CGPoint(x: 100, y: 100), dt: 0.01)
+
+    let velAfterMotionDx = tracker.releaseVelocity.dx // Though releaseVelocity is empty until disengage, velX is updated internally
+    // We can't access velX directly, so we'll simulate waiting
+
+    // Waiting multiple frames without moving decays velocity
+    for _ in 1...10 {
+        _ = tracker.process(screen: CGPoint(x: 100, y: 100), dt: 0.1)
+    }
+
+    _ = tracker.disengage()
+
+    expect(abs(tracker.releaseVelocity.dx) < 1.0, "dx velocity should decay towards zero after stopping")
+    expect(abs(tracker.releaseVelocity.dy) < 1.0, "dy velocity should decay towards zero after stopping")
+}
+
 // MARK: - Runner
 
 @main
@@ -140,6 +251,12 @@ enum PanScrollTrackerTestRunner {
         testSuspend()
         testFractionalAccumulation()
         testVelocity()
+
+        testReverseScrolling()
+        testSpeedMultiplier()
+        testAxisLockVertical()
+        testAxisLockGiveUp()
+        testVelocityDecay()
 
         if failures == 0 {
             print("ok — \(checks) checks passed")

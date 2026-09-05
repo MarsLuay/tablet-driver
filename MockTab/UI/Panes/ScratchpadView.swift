@@ -5,7 +5,10 @@
 import SwiftUI
 import AppKit
 import Combine
+import OSLog
 import TabletKit
+
+private let scratchpadLog = Logger(subsystem: "com.cyzor.mocktab", category: "scratchpad")
 
 // MARK: - SwiftUI wrapper
 
@@ -43,6 +46,8 @@ struct ScratchpadView: View {
 
     @State private var currentPressure: Double = 0
     @State private var clearID = 0
+    @State private var resetViewportID = 0
+    @State private var canvasZoom = 1.0
 
     /// Tracks whether this view is on-screen AND the app is frontmost.
     /// Used to gate the live-touch publish — when either is false, the
@@ -108,7 +113,7 @@ struct ScratchpadView: View {
 
             Text(
                 String(
-                    localized: "Draw on the canvas to verify pressure and click behavior.",
+                    localized: "Draw with the pen. Two fingers pan the canvas; pinch zooms it.",
                     comment: "Description of the scratchpad drawing area"
                 )
             )
@@ -117,7 +122,9 @@ struct ScratchpadView: View {
 
             ScratchpadCanvas(
                 currentPressure: $currentPressure,
+                zoomScale: $canvasZoom,
                 clearID: clearID,
+                resetViewportID: resetViewportID,
                 tabletManager: tabletManager,
                 undoManager: undoManager
             )
@@ -174,11 +181,22 @@ struct ScratchpadView: View {
             }
             .help("Erase all strokes from the test canvas")
             .controlSize(.small)
+
+            Text("Canvas \(Int((canvasZoom * 100).rounded()))%")
+                .appFont(.monospaced)
+                .foregroundStyle(.secondary)
+
+            Button("Reset View") {
+                resetViewportID += 1
+            }
+            .help("Reset scratchpad pan and zoom")
+            .controlSize(.small)
         }
     }
 
-    /// Tilt and touch visualizers share one row; both canvases are 100 pt
-    /// tall, so their vertical centers align without any further bookkeeping.
+    /// Tilt and touch visualizers share one row. The touch surface preserves
+    /// the detected tablet's coordinate aspect ratio instead of being forced
+    /// into the tilt indicator's square frame.
     private var visualizerRow: some View {
         HStack(spacing: 24) {
             HStack(spacing: 10) {
@@ -201,13 +219,25 @@ struct ScratchpadView: View {
 
                     TouchVisualizer(
                         liveTouch: liveTouch,
-                        maxContacts: spec?.maxTouchContacts ?? 10
+                        maxContacts: spec?.maxTouchContacts ?? 10,
+                        maxX: spec?.touchMaxX ?? 0,
+                        maxY: spec?.touchMaxY ?? 0
                     )
-                    .frame(width: 100, height: 100)
-                    .help("Live finger-touch contacts from the active device's touch surface.")
+                    .frame(width: 100 * touchSurfaceAspectRatio, height: 100)
+                    .help("Live raw finger-touch positions across the active device's full touch surface.")
                 }
             }
         }
+    }
+
+    /// The registry's touch coordinate maxima are the only per-device surface
+    /// dimensions available to MockTab. Their ratio matches the reported
+    /// touch area, including the PTH-660's rectangular sensor.
+    private var touchSurfaceAspectRatio: CGFloat {
+        let maxX = spec?.touchMaxX ?? 0
+        let maxY = spec?.touchMaxY ?? 0
+        guard maxX > 0, maxY > 0 else { return 1 }
+        return CGFloat(maxX) / CGFloat(maxY)
     }
 
     private var pressureColor: Color {
@@ -226,9 +256,17 @@ struct ScratchpadView: View {
 private struct TouchVisualizer: View {
     @ObservedObject var liveTouch: LiveTouchPublisher
     let maxContacts: Int
+    let maxX: Int
+    let maxY: Int
 
     var body: some View {
-        TouchContactsCanvas(contacts: liveTouch.contacts, maxContacts: maxContacts)
+        TouchContactsCanvas(
+            contacts: liveTouch.contacts,
+            maxContacts: maxContacts,
+            maxX: maxX,
+            maxY: maxY
+        )
+        .accessibilityLabel("Live touch surface showing \(liveTouch.contacts.count) detected contact\(liveTouch.contacts.count == 1 ? "" : "s")")
     }
 }
 
@@ -341,15 +379,21 @@ private struct TiltDisc: View, Equatable {
 
 // MARK: - Touch contacts visualizer
 
-/// Top-down rectangle showing normalised finger-contact positions as numbered
-/// dots. The tablet's touch surface maps to the full canvas area.
+/// Top-down rectangle showing the raw finger-contact positions as their real
+/// touch-surface locations. The canvas preserves the detected sensor ratio;
+/// it never rescales a pair of contacts around their own bounding box.
 /// Contacts fade out over ~0.3 s after they lift (lift = empty contacts array).
 private struct TouchContactsCanvas: View, Equatable {
     let contacts: [TouchContact]
     let maxContacts: Int
+    let maxX: Int
+    let maxY: Int
 
     static func == (lhs: TouchContactsCanvas, rhs: TouchContactsCanvas) -> Bool {
-        lhs.contacts == rhs.contacts && lhs.maxContacts == rhs.maxContacts
+        lhs.contacts == rhs.contacts
+            && lhs.maxContacts == rhs.maxContacts
+            && lhs.maxX == rhs.maxX
+            && lhs.maxY == rhs.maxY
     }
 
     var body: some View {
@@ -371,28 +415,14 @@ private struct TouchContactsCanvas: View, Equatable {
     private func drawContacts(ctx: GraphicsContext, size: CGSize) {
         guard !contacts.isEmpty else { return }
 
-        // Determine the normalised coordinate range from the first contact.
-        // TouchContact uses raw tablet units; we don't have access to maxX/maxY
-        // here, so normalise each contact against the bounding box of all
-        // contacts with a small guard against zero-range.
-        let xs = contacts.map { Double($0.x) }
-        let ys = contacts.map { Double($0.y) }
-
-        // Normalise within [0,1] using whatever range the contacts span.
-        // Falls back to centring a single contact on the canvas.
-        func norm(_ val: Double, _ vals: [Double]) -> Double {
-            let lo = vals.min() ?? 0
-            let hi = vals.max() ?? 1
-            guard hi > lo else { return 0.5 }
-            return (val - lo) / (hi - lo)
-        }
-
         let r: CGFloat = 6
         let pad: CGFloat = r + 4
+        let rawMaxX = CGFloat(Swift.max(maxX, 1))
+        let rawMaxY = CGFloat(Swift.max(maxY, 1))
 
-        for (i, contact) in contacts.enumerated() {
-            let nx = contacts.count == 1 ? 0.5 : norm(Double(contact.x), xs)
-            let ny = contacts.count == 1 ? 0.5 : norm(Double(contact.y), ys)
+        for contact in contacts {
+            let nx = Swift.min(1, Swift.max(0, CGFloat(contact.x) / rawMaxX))
+            let ny = Swift.min(1, Swift.max(0, CGFloat(contact.y) / rawMaxY))
 
             let cx = pad + nx * (size.width  - 2 * pad)
             let cy = pad + ny * (size.height - 2 * pad)
@@ -401,9 +431,10 @@ private struct TouchContactsCanvas: View, Equatable {
             ctx.fill(Path(ellipseIn: dot), with: .color(.accentColor.opacity(0.8)))
             ctx.stroke(Path(ellipseIn: dot), with: .color(.white.opacity(0.9)), lineWidth: 1)
 
-            // Label: contact index
+            // Label the hardware contact id, not this frame's array index, so
+            // a lifted/reordered finger is obvious while diagnosing gestures.
             ctx.draw(
-                Text("\(i + 1)")
+                Text("\(contact.id)")
                     .font(.system(size: 7, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white),
                 at: CGPoint(x: cx, y: cy),
@@ -416,7 +447,9 @@ private struct TouchContactsCanvas: View, Equatable {
 
 private struct ScratchpadCanvas: NSViewRepresentable {
     @Binding var currentPressure: Double
+    @Binding var zoomScale: Double
     let clearID: Int
+    let resetViewportID: Int
     let tabletManager: TabletManager
     let undoManager: UndoManager?
 
@@ -425,6 +458,7 @@ private struct ScratchpadCanvas: NSViewRepresentable {
         view.onPressureChange = { pressure in
             currentPressure = pressure
         }
+        view.onZoomChange = { zoomScale = $0 }
         view.tabletManager = tabletManager
         view.injectedUndoManager = undoManager
         return view
@@ -433,21 +467,28 @@ private struct ScratchpadCanvas: NSViewRepresentable {
     func updateNSView(_ nsView: ScratchpadNSView, context: Context) {
         nsView.tabletManager = tabletManager
         nsView.injectedUndoManager = undoManager
+        nsView.onZoomChange = { zoomScale = $0 }
         if clearID != context.coordinator.lastClearID {
             nsView.clear()
             context.coordinator.lastClearID = clearID
         }
+        if resetViewportID != context.coordinator.lastResetViewportID {
+            nsView.resetViewport()
+            context.coordinator.lastResetViewportID = resetViewportID
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(clearID: clearID)
+        Coordinator(clearID: clearID, resetViewportID: resetViewportID)
     }
 
     final class Coordinator {
         var lastClearID: Int
+        var lastResetViewportID: Int
 
-        init(clearID: Int) {
+        init(clearID: Int, resetViewportID: Int) {
             self.lastClearID = clearID
+            self.lastResetViewportID = resetViewportID
         }
     }
 }
@@ -456,6 +497,7 @@ private struct ScratchpadCanvas: NSViewRepresentable {
 
 final class ScratchpadNSView: NSView {
     var onPressureChange: ((Double) -> Void)?
+    var onZoomChange: ((Double) -> Void)?
     weak var tabletManager: TabletManager?
     var injectedUndoManager: UndoManager?
 
@@ -475,7 +517,8 @@ final class ScratchpadNSView: NSView {
     /// blit + the live stroke rather than re-rendering every segment every frame.
     private var strokeCache: NSImage?
 
-    /// Cumulative translation from canvas space to view space.
+    /// Cumulative canvas-to-view transform. Strokes remain in unscaled canvas
+    /// coordinates, so touch pan and pinch never alter their geometry.
     ///
     /// Strokes are stored in canvas space (stable coordinates independent of
     /// view size). On each resize, `contentOffset.y` is adjusted by the height
@@ -485,6 +528,22 @@ final class ScratchpadNSView: NSView {
     /// Drawing applies this offset as a transform; mouse events subtract it
     /// before coordinates are stored.
     private var contentOffset: CGPoint = .zero
+    private var canvasScale: CGFloat = 1
+    private static let minimumCanvasScale: CGFloat = 0.25
+    private static let maximumCanvasScale: CGFloat = 4.0
+    private static let zoomSensitivity: CGFloat = 0.006
+
+    /// Gesture-level diagnostics: aggregate per sequence instead of writing a
+    /// log line for every 60–100 Hz scroll event.
+    private var panLogActive = false
+    private var panLogEvents = 0
+    private var panLogTotalX: CGFloat = 0
+    private var panLogTotalY: CGFloat = 0
+    private var panLogEndTimer: Timer?
+    private var zoomLogActive = false
+    private var zoomLogEvents = 0
+    private var zoomLogTotalDelta: CGFloat = 0
+    private var zoomLogEndTimer: Timer?
 
     override var isOpaque: Bool { false }
     override var acceptsFirstResponder: Bool { true }
@@ -521,6 +580,11 @@ final class ScratchpadNSView: NSView {
         commonInit()
     }
 
+    deinit {
+        panLogEndTimer?.invalidate()
+        zoomLogEndTimer?.invalidate()
+    }
+
     private func commonInit() {
         wantsLayer = true
         layer?.cornerRadius = 6
@@ -550,12 +614,16 @@ final class ScratchpadNSView: NSView {
 
     /// Converts a point in view space to canvas space (stable across resizes).
     private func canvasPoint(_ viewPt: NSPoint) -> NSPoint {
-        NSPoint(x: viewPt.x - contentOffset.x, y: viewPt.y - contentOffset.y)
+        NSPoint(
+            x: (viewPt.x - contentOffset.x) / canvasScale,
+            y: (viewPt.y - contentOffset.y) / canvasScale)
     }
 
     /// Converts a point in canvas space back to view space (for dirty-rect math).
     private func viewPoint(_ canvasPt: NSPoint) -> NSPoint {
-        NSPoint(x: canvasPt.x + contentOffset.x, y: canvasPt.y + contentOffset.y)
+        NSPoint(
+            x: canvasPt.x * canvasScale + contentOffset.x,
+            y: canvasPt.y * canvasScale + contentOffset.y)
     }
 
     // MARK: - Mouse events
@@ -594,7 +662,7 @@ final class ScratchpadNSView: NSView {
         onPressureChange?(Double(event.pressure))
         // Dirty rect is in view space; convert the previous canvas point back.
         let previousView = viewPoint(previousCanvas)
-        let pad: CGFloat = Swift.max(2, CGFloat(event.pressure) * 20)
+        let pad: CGFloat = Swift.max(2, CGFloat(event.pressure) * 20 * canvasScale)
         let minX = Swift.min(previousView.x, viewPt.x) - pad
         let maxX = Swift.max(previousView.x, viewPt.x) + pad
         let minY = Swift.min(previousView.y, viewPt.y) - pad
@@ -617,6 +685,107 @@ final class ScratchpadNSView: NSView {
         }
 
         onPressureChange?(0)
+        needsDisplay = true
+    }
+
+    /// MockTab injects two-finger pan as a continuous pixel-wheel event and
+    /// pinch as that event with Control held. Treat both as canvas navigation
+    /// so Scratchpad directly verifies the tablet's touch gestures.
+    override func scrollWheel(with event: NSEvent) {
+        let viewPt = convert(event.locationInWindow, from: nil)
+        if event.modifierFlags.contains(.control) {
+            zoom(around: viewPt, delta: event.scrollingDeltaY)
+        } else {
+            pan(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY)
+        }
+    }
+
+    private func pan(dx: CGFloat, dy: CGFloat) {
+        guard dx != 0 || dy != 0 else { return }
+        recordPan(dx: dx, dy: dy)
+        // TouchStateTracker already resolves horizontal motion into a
+        // content-following delta. Scratchpad's unflipped AppKit canvas has
+        // the opposite vertical axis, so only Y needs inversion.
+        contentOffset.x += dx
+        contentOffset.y -= dy
+        strokeCache = nil
+        needsDisplay = true
+    }
+
+    private func zoom(around viewPt: NSPoint, delta: CGFloat) {
+        guard delta != 0 else { return }
+        let anchor = canvasPoint(viewPt)
+        let factor = exp(delta * Self.zoomSensitivity)
+        let newScale = Swift.max(
+            Self.minimumCanvasScale,
+            Swift.min(Self.maximumCanvasScale, canvasScale * factor))
+        guard newScale != canvasScale else { return }
+        recordZoom(delta: delta)
+        canvasScale = newScale
+        contentOffset = CGPoint(
+            x: viewPt.x - anchor.x * canvasScale,
+            y: viewPt.y - anchor.y * canvasScale)
+        strokeCache = nil
+        onZoomChange?(Double(canvasScale))
+        needsDisplay = true
+    }
+
+    private func recordPan(dx: CGFloat, dy: CGFloat) {
+        if !panLogActive {
+            panLogActive = true
+            panLogEvents = 0
+            panLogTotalX = 0
+            panLogTotalY = 0
+            scratchpadLog.notice("pan begin scale=\(self.canvasScale)")
+        }
+        panLogEvents += 1
+        panLogTotalX += dx
+        panLogTotalY += dy
+        panLogEndTimer?.invalidate()
+        panLogEndTimer = Timer.scheduledTimer(withTimeInterval: 0.16, repeats: false) { [weak self] _ in
+            self?.finishPanLog(reason: "idle")
+        }
+    }
+
+    private func finishPanLog(reason: String) {
+        panLogEndTimer?.invalidate()
+        panLogEndTimer = nil
+        guard panLogActive else { return }
+        scratchpadLog.notice(
+            "pan end reason=\(reason, privacy: .public) events=\(self.panLogEvents) wheelDx=\(self.panLogTotalX) wheelDy=\(self.panLogTotalY) canvasDx=\(self.panLogTotalX) canvasDy=\(-self.panLogTotalY)")
+        panLogActive = false
+    }
+
+    private func recordZoom(delta: CGFloat) {
+        if !zoomLogActive {
+            zoomLogActive = true
+            zoomLogEvents = 0
+            zoomLogTotalDelta = 0
+            scratchpadLog.notice("zoom begin scale=\(self.canvasScale)")
+        }
+        zoomLogEvents += 1
+        zoomLogTotalDelta += delta
+        zoomLogEndTimer?.invalidate()
+        zoomLogEndTimer = Timer.scheduledTimer(withTimeInterval: 0.16, repeats: false) { [weak self] _ in
+            self?.finishZoomLog(reason: "idle")
+        }
+    }
+
+    private func finishZoomLog(reason: String) {
+        zoomLogEndTimer?.invalidate()
+        zoomLogEndTimer = nil
+        guard zoomLogActive else { return }
+        scratchpadLog.notice(
+            "zoom end reason=\(reason, privacy: .public) events=\(self.zoomLogEvents) delta=\(self.zoomLogTotalDelta) scale=\(self.canvasScale)")
+        zoomLogActive = false
+    }
+
+    func resetViewport() {
+        guard contentOffset != .zero || canvasScale != 1 else { return }
+        contentOffset = .zero
+        canvasScale = 1
+        strokeCache = nil
+        onZoomChange?(1)
         needsDisplay = true
     }
 
@@ -757,11 +926,11 @@ final class ScratchpadNSView: NSView {
         }
     }
 
-    /// Pushes the canvas-to-view translation onto the current graphics context.
+    /// Pushes the canvas-to-view transform onto the current graphics context.
     private func applyContentOffset() {
-        let xform = NSAffineTransform()
-        xform.translateX(by: contentOffset.x, yBy: contentOffset.y)
-        xform.concat()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.translateBy(x: contentOffset.x, y: contentOffset.y)
+        context.scaleBy(x: canvasScale, y: canvasScale)
     }
 
     /// Renders all committed strokes into an NSImage the same size as the view.

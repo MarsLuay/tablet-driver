@@ -1,5 +1,5 @@
 // MockTab — native macOS driver for supported drawing tablets
-// SPDX-FileCopyrightText: 2026 Jay Petronis (Cyzor)
+// SPDX-FileCopyrightText: 2026 MockTab Authors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import SwiftUI
@@ -122,6 +122,17 @@ struct TouchView: View {
             )
             .disabled(!settings.touchEnabled)
             .help("Two fingers moving together post smooth scroll events that apps treat as trackpad scrolling, including rubber-banding in Safari and Preview.")
+
+            DescribedToggle(
+                "Pinch to Zoom",
+                isOn: settings.recordingBinding(
+                    String(localized: "Pinch to Zoom", comment: "Undo action name: pinch-to-zoom toggle in the Touch pane"),
+                    get: { settings.pinchZoomEnabled },
+                    set: { settings.pinchZoomEnabled = $0 }),
+                description: "Use two fingers to pinch and zoom in or out."
+            )
+            .disabled(!settings.touchEnabled || !settings.twoFingerScroll)
+            .help("Two fingers spreading or pinching together zoom in or out, the same as a trackpad pinch — works anywhere a trackpad pinch would, including Safari, Preview, and Photoshop.")
 
             DescribedToggle(
                 "Reverse Direction",
@@ -256,6 +267,7 @@ struct TouchView: View {
     private typealias TouchState = (
         enabled: Bool, tapToClick: Bool, sensitivity: Double,
         twoFingerScroll: Bool, reverseScroll: Bool, twoFingerScrollMomentum: Bool,
+        pinchZoom: Bool,
         areaX: Double, areaY: Double, areaW: Double, areaH: Double
     )
 
@@ -263,10 +275,11 @@ struct TouchView: View {
         let old: TouchState = (
             settings.touchEnabled, settings.tapToClick, settings.touchSensitivity,
             settings.twoFingerScroll, settings.reverseScrollDirection, settings.twoFingerScrollMomentum,
+            settings.pinchZoomEnabled,
             settings.touchAreaX, settings.touchAreaY,
             settings.touchAreaWidth, settings.touchAreaHeight
         )
-        let defaults: TouchState = (false, false, 1.0, true, false, true, 0, 0, 1, 1)
+        let defaults: TouchState = (false, false, 1.0, true, false, true, false, 0, 0, 1, 1)
         applyTouchState(defaults, undoTo: old)
     }
 
@@ -276,6 +289,7 @@ struct TouchView: View {
         settings.undoManager?.beginUndoGrouping()
         (settings.touchEnabled, settings.tapToClick, settings.touchSensitivity,
          settings.twoFingerScroll, settings.reverseScrollDirection, settings.twoFingerScrollMomentum,
+         settings.pinchZoomEnabled,
          settings.touchAreaX, settings.touchAreaY,
          settings.touchAreaWidth, settings.touchAreaHeight) = new
         settings.record(String(localized: "Reset Pane to Defaults")) {

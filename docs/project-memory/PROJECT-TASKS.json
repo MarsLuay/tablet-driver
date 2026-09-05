@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "projectId": "tablet-driver",
+  "projectKey": "tablet-driver",
+  "tasks": [
+    {
+      "id": "memory-baseline",
+      "title": "Maintain canonical project memory",
+      "status": "done",
+      "summary": "Bounded project memory captured from verified top-level repository evidence.",
+      "evidence": [
+        "README.md",
+        "Architecture.md",
+        "Contributing.md",
+        "MockTab/App/MockTabApp.swift",
+        "MockTab/Info.plist",
+        "MockTab.xcodeproj/project.pbxproj",
+        "TabletKit/Package.swift",
+        "TabletKit/Tests/TabletKitTests/WacomDeviceRegistryTests.swift"
+      ]
+    }
+  ]
+}

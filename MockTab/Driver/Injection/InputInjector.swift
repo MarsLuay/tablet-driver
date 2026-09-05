@@ -230,6 +230,7 @@ final class InputInjector: @unchecked Sendable {
         proximityExitDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
         panScrollSafetyNetTimer.map { CFRunLoopTimerInvalidate($0) }
         momentumTailTimer.map { CFRunLoopTimerInvalidate($0) }
+        touchMomentumTailTimer.map { CFRunLoopTimerInvalidate($0) }
         button1UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
         button2UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
         button3UpDebounceTimer.map { CFRunLoopTimerInvalidate($0) }
@@ -398,6 +399,23 @@ final class InputInjector: @unchecked Sendable {
     var momentumVelocity: CGVector = .zero
     var momentumAccumX = 0.0
     var momentumAccumY = 0.0
+    /// Real time of the last tick, measured rather than assumed — a one-shot
+    /// self-rescheduling timer never lands exactly `momentumTailInterval`
+    /// apart under runloop load, so the decay math measures actual elapsed
+    /// time each tick instead of silently assuming a fixed cadence.
+    var momentumLastTickTime: CFAbsoluteTime = 0
+
+    /// Same mechanism as `momentumTailTimer` above, kept as a separate timer
+    /// and velocity state so a touch scroll's tail can't cancel or blend with
+    /// an in-flight Scroll Drag tail (see `startTouchMomentumTail` in
+    /// InputInjector+Touch.swift). Only used on non-`NSScrollView` apps —
+    /// `NSScrollView` already synthesizes its own coast from the phased
+    /// began/changed/ended stream `postTouchScroll` posts either way.
+    var touchMomentumTailTimer: CFRunLoopTimer?
+    var touchMomentumVelocity: CGVector = .zero
+    var touchMomentumAccumX = 0.0
+    var touchMomentumAccumY = 0.0
+    var touchMomentumLastTickTime: CFAbsoluteTime = 0
 
     /// Panning method, captured at engage from `ToolSettings.panScrollMomentum`.
     /// `true` (Momentum, default): the stream carries the phased began/changed/
@@ -790,6 +808,9 @@ final class InputInjector: @unchecked Sendable {
 
     /// Mutable per-sequence state for capacitive touch.  HIDThread-owned.
     var touchTracker = TouchStateTracker()
+    /// Per-contact palm classification. HIDThread-owned alongside the
+    /// tracker, so a palm can never enter its gesture state.
+    var touchPalmRejector = TouchPalmRejector()
     /// CFAbsoluteTime when the pen last left proximity.  Touch is suppressed
     /// while the pen is in proximity and for a brief grace window after exit
     /// so palm-rejection bounces (finger contact arriving 1–2 frames after

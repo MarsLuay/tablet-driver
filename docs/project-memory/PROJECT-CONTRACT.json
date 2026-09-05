@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contractId": "tablet-driver-context-v1",
+  "sourceOfTruth": "README.md",
+  "instructionFiles": [],
+  "taskLedger": {
+    "path": "docs/project-memory/PROJECT-TASKS.md",
+    "section": "Active task ledger"
+  },
+  "projectMemory": {
+    "taskPath": "docs/project-memory/PROJECT-TASKS.json",
+    "candidatePath": null,
+    "verifiedPath": null,
+    "humanReadablePaths": [
+      "docs/project-memory/architecture.md",
+      "docs/project-memory/decisions.md",
+      "docs/project-memory/quirks.md",
+      "docs/project-memory/known-failures.md"
+    ]
+  },
+  "privacy": {
+    "forbiddenPatterns": [
+      "absolute paths",
+      "credential-like assignments",
+      "runtime or provider state",
+      "logs",
+      "generated or bulky data"
+    ]
+  },
+  "routes": [
+    {
+      "id": "project-memory",
+      "path": "context/routes/project-memory.json"
+    }
+  ],
+  "project": {
+    "key": "tablet-driver"
+  },
+  "contextBudget": {
+    "maxTokens": 1800,
+    "charsPerToken": 4
+  }
+}

@@ -1,5 +1,5 @@
 // MockTab — native macOS driver for supported drawing tablets
-// SPDX-FileCopyrightText: 2026 Jay Petronis (Cyzor)
+// SPDX-FileCopyrightText: 2026 MockTab Authors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import AppKit
@@ -65,6 +65,7 @@ extension TabletSettings {
         twoFingerScroll = loadBool("twoFingerScroll", default: true)
         reverseScrollDirection = loadBool("naturalScrolling", default: false)
         twoFingerScrollMomentum = loadBool("twoFingerScrollMomentum", default: true)
+        pinchZoomEnabled = loadBool("pinchZoomEnabled", default: false)
         touchAreaX      = Swift.max(0.0,  Swift.min(loadDouble("touchAreaX",      default: 0.0), 1.0))
         touchAreaY      = Swift.max(0.0,  Swift.min(loadDouble("touchAreaY",      default: 0.0), 1.0))
         touchAreaWidth  = Swift.max(0.01, Swift.min(loadDouble("touchAreaWidth",  default: 1.0), 1.0))

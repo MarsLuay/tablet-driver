@@ -1,5 +1,5 @@
 // MockTab — native macOS driver for supported drawing tablets
-// SPDX-FileCopyrightText: 2026 Jay Petronis (Cyzor)
+// SPDX-FileCopyrightText: 2026 MockTab Authors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Requires macOS 13+ for .draggable / .dropDestination.
@@ -133,6 +133,7 @@ struct AppOverrideBar: View {
     static let touchKeys: Set<String> = [
         "touchEnabled", "tapToClick", "touchSensitivity",
         "twoFingerScroll", "naturalScrolling", "twoFingerScrollMomentum",
+        "pinchZoomEnabled",
         "touchAreaX", "touchAreaY", "touchAreaWidth", "touchAreaHeight",
     ]
 

@@ -1,10 +1,108 @@
 // MockTab — native macOS driver for supported drawing tablets
-// SPDX-FileCopyrightText: 2026 Jay Petronis (Cyzor)
+// SPDX-FileCopyrightText: 2026 MockTab Authors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import CoreGraphics
 import Foundation
 import TabletKit
+
+/// Rejects palm-sized capacitive contacts before they reach gesture tracking.
+///
+/// The IntuosV2 touch family (PTH-660 and PTH-860 — the latter's touch
+/// maxima are the registry's own basis for the former's estimated ones, and
+/// both share the same 0x21 report layout) reports the contact major and
+/// minor axes for every touch slot. The units are device-specific, so this
+/// filter is deliberately limited to that calibrated family rather than
+/// applying an unsafe global threshold. A rejected slot remains rejected
+/// until it falls below a lower threshold or lifts, which keeps a noisy palm
+/// footprint from flapping into a finger gesture.
+struct TouchPalmRejector {
+
+    struct Result {
+        let acceptedIDs: Set<Int>
+        let newlyRejectedIDs: [Int]
+        let newlyAcceptedIDs: [Int]
+    }
+
+    /// PTH-660 and PTH-860 USB and Bluetooth Classic PIDs. Injection normally
+    /// sees the canonical USB PID, but accepting both keeps the filter
+    /// correct before canonicalization and in isolated tests.
+    private static let calibratedProductIDs: Set<Int> = [0x0357, 0x0360, 0x0358, 0x0361]
+
+    /// Live PTH-660 capture: a palm begins at Width/Height 6/7, while the
+    /// finger-sized fragments alongside it remain 1–4. The descriptor's
+    /// logical maxima (41 × 31) are not physical millimetres, so a threshold
+    /// inferred from those maxima was invalid; use both observed raw axes.
+    private static let rejectAxisAtOrAbove = 5
+    /// A rejected contact only returns once both axes shrink below the
+    /// threshold, avoiding size-noise flapping during a palm contact.
+    private static let acceptAxisAtOrBelow = 3
+
+    private var rejectedIDs: Set<Int> = []
+
+    static func supports(productID: Int) -> Bool {
+        calibratedProductIDs.contains(productID)
+    }
+
+    private static func isPalm(major: Int?, minor: Int?) -> Bool {
+        [major, minor].compactMap { $0 }.contains { $0 >= rejectAxisAtOrAbove }
+    }
+
+    private static func isFingerSized(major: Int?, minor: Int?) -> Bool {
+        let axes = [major, minor].compactMap { $0 }
+        return !axes.isEmpty && axes.allSatisfy { $0 <= acceptAxisAtOrBelow }
+    }
+
+    mutating func filter(
+        contacts: [(id: Int, major: Int?, minor: Int?)],
+        productID: Int
+    ) -> Result {
+        guard Self.supports(productID: productID) else {
+            reset()
+            return Result(
+                acceptedIDs: Set(contacts.map(\.id)),
+                newlyRejectedIDs: [], newlyAcceptedIDs: [])
+        }
+
+        let activeIDs = Set(contacts.map(\.id))
+        rejectedIDs.formIntersection(activeIDs)
+
+        var acceptedIDs: Set<Int> = []
+        var newlyRejectedIDs: [Int] = []
+        var newlyAcceptedIDs: [Int] = []
+        acceptedIDs.reserveCapacity(contacts.count)
+
+        for contact in contacts {
+            if rejectedIDs.contains(contact.id) {
+                // A report missing its footprint must not let a previously
+                // classified palm back into an active gesture.
+                guard Self.isFingerSized(major: contact.major, minor: contact.minor) else {
+                    continue
+                }
+                rejectedIDs.remove(contact.id)
+                newlyAcceptedIDs.append(contact.id)
+                acceptedIDs.insert(contact.id)
+                continue
+            }
+
+            guard Self.isPalm(major: contact.major, minor: contact.minor) else {
+                acceptedIDs.insert(contact.id)
+                continue
+            }
+            rejectedIDs.insert(contact.id)
+            newlyRejectedIDs.append(contact.id)
+        }
+
+        return Result(
+            acceptedIDs: acceptedIDs,
+            newlyRejectedIDs: newlyRejectedIDs,
+            newlyAcceptedIDs: newlyAcceptedIDs)
+    }
+
+    mutating func reset() {
+        rejectedIDs.removeAll(keepingCapacity: true)
+    }
+}
 
 /// Translates a per-frame set of capacitive contacts into a single sticky-mode
 /// gesture intent (pointer drag vs. two-finger scroll vs. tap-click).
@@ -20,11 +118,19 @@ import TabletKit
 /// — everything it needs is passed via `process(...)` so tests can drive it.
 struct TouchStateTracker {
 
-    enum Mode {
+    enum Mode: Equatable {
         case idle
         case pending        // contact(s) down, gesture not yet committed
         case pointer        // single contact moving the cursor
-        case scroll         // two contacts moving the scroll wheel
+        case scroll         // two contacts: pan scroll and/or pinch-zoom
+    }
+
+    /// Sticky two-finger sub-mode once significant motion is seen.
+    /// Pinch vs pan is chosen once per sequence (same sticky policy as Mode).
+    enum TwoFingerKind {
+        case undecided
+        case pan
+        case pinch
     }
 
     enum Intent: Equatable {
@@ -39,6 +145,14 @@ struct TouchStateTracker {
         /// (CG `kCGScrollWheelEventScrollPhase` values: 1=Began, 2=Changed,
         /// 4=Ended).  Sign convention follows the natural-scrolling setting.
         case scrollDelta(dx: Double, dy: Double, phase: ScrollPhase)
+        /// Pinch-zoom magnify delta + phase, mirroring `scrollDelta`'s
+        /// envelope. `magnification` is the exact relative growth of
+        /// inter-finger distance this frame — (newDistance / oldDistance) - 1
+        /// — which is what a real trackpad's magnify gesture reports, and
+        /// what makes per-frame deltas compound to the correct total scale
+        /// factor (Π(1 + dᵢ) telescopes to distance_final / distance_initial).
+        /// Fingers spreading → positive.
+        case zoomMagnify(magnification: Double, phase: ScrollPhase)
     }
 
     enum ScrollPhase: Int {
@@ -70,6 +184,38 @@ struct TouchStateTracker {
     /// when the last contact lifts.
     private var lastScrollPhase: ScrollPhase = .ended
 
+    /// Sticky pan vs pinch once motion crosses `twoFingerDecideDistance`.
+    private var twoFingerKind: TwoFingerKind = .undecided
+    /// Last inter-finger distance in screen points (pinch tracking).
+    private var lastPinchDistance: Double = 0
+    /// Centroid / distance at the start of an undecided two-finger sequence.
+    /// Decision uses cumulative motion from these anchors, not per-frame deltas
+    /// (slow pans never exceed the threshold in a single high-rate frame).
+    private var undecidedOriginCentroid: CGPoint = .zero
+    private var undecidedOriginDistance: Double = 0
+
+    /// Recent per-frame instantaneous velocities (points/second), each frame's
+    /// raw `delta/dt` with a timestamp — the momentum-tail seed. An EMA was
+    /// tried first and rejected: at `velocityAlpha = 0.20` it takes several
+    /// frames to converge, and a real flick is often over in less time than
+    /// that, so the EMA reports well under the finger's actual peak speed —
+    /// exactly the "momentum falls short of a real trackpad" complaint. Using
+    /// the fastest sample within a short recent window instead captures the
+    /// peak even from a very brief flick, matching `PanScrollTracker`'s
+    /// equivalent. Pruned to `peakVelocityWindow` each frame; tiny array,
+    /// never holds more than a handful of samples at touch report rates.
+    private var recentVelocities: [(time: CFAbsoluteTime, v: CGVector)] = []
+    private var lastFrameTime: CFAbsoluteTime = 0
+    /// Time of the last frame with nonzero motion. A real trackpad detects a
+    /// deliberate brake — holding fingers still before lifting — and starts
+    /// no momentum even if a fast sample is still sitting in `recentVelocities`
+    /// from just before the brake. Gating release on *recent* motion instead
+    /// of trusting the peak-velocity window alone catches that directly.
+    private var lastMotionTime: CFAbsoluteTime = 0
+    /// Captured at scroll-gesture end; read by the posting layer to start a
+    /// momentum decay tail. Unused while the gesture is still active.
+    private(set) var releaseVelocity: CGVector = .zero
+
     // MARK: - Tunables
 
     /// Maximum drift (in screen points) that still counts as a tap.
@@ -84,6 +230,20 @@ struct TouchStateTracker {
     /// having dragged the cursor in the meantime.  Same trick trackpads use;
     /// the cost is pointer motion starting ~0.1 s late.
     static let onsetDelay: CFAbsoluteTime = 0.12
+    /// Motion (screen points) needed to commit pan vs pinch for a sequence.
+    /// Slightly above finger-jitter so a sliding pan doesn't decide on noise.
+    static let twoFingerDecideDistance: Double = 6.0
+    /// Pinch wins only when inter-finger distance change clearly exceeds
+    /// centroid translation. Equal/noisy scale vs pan → stay pan (scroll).
+    static let pinchDominanceRatio: Double = 1.75
+    /// How far back to look for the fastest recent sample when seeding
+    /// momentum release velocity — matches `PanScrollTracker.peakVelocityWindow`.
+    static let peakVelocityWindow: CFAbsoluteTime = 0.06
+    /// A lift is only treated as a flick-release if motion happened within
+    /// this many seconds of it — otherwise the fingers were held still
+    /// (braking) and release velocity is suppressed regardless of any fast
+    /// sample still sitting in the peak-velocity window.
+    static let momentumRecencyWindow: CFAbsoluteTime = 0.05
 
     // MARK: - Process
 
@@ -129,12 +289,14 @@ struct TouchStateTracker {
     /// `tapToClick` and `twoFingerScroll` gate the optional behaviours;
     /// `reverseScrollDirection` flips the sign of the scroll delta.
     /// `sensitivity` multiplies pointer-mode movement (1.0 = identity).
+    /// `pinchZoom` enables sticky pinch → synthesized magnify-gesture zoom (vs pan scroll).
     mutating func process(
         contacts: [(id: Int, screen: CGPoint)],
         tapToClick: Bool,
         twoFingerScroll: Bool,
         reverseScrollDirection: Bool,
         sensitivity: Double,
+        pinchZoom: Bool = false,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Intent {
 
@@ -144,11 +306,18 @@ struct TouchStateTracker {
         if contacts.isEmpty {
             let priorMode = mode
             let priorPhase = lastScrollPhase
+            let priorKind = twoFingerKind
             let tap = tapToClick && (priorMode == .pointer || priorMode == .pending)
                 && now - tapStart <= Self.tapMaxDuration
                 && tapMaxDelta < Self.tapMaxDistance
+            let peak = recentVelocities
+                .filter { now - $0.time <= Self.peakVelocityWindow }
+                .max { hypot($0.v.dx, $0.v.dy) < hypot($1.v.dx, $1.v.dy) }?.v ?? .zero
+            releaseVelocity = now - lastMotionTime <= Self.momentumRecencyWindow ? peak : .zero
             reset()
             switch priorMode {
+            case .scroll where priorKind == .pinch && priorPhase != .ended:
+                return .zoomMagnify(magnification: 0, phase: .ended)
             case .scroll where priorPhase != .ended:
                 return .scrollDelta(dx: 0, dy: 0, phase: .ended)
             case .pointer where tap, .pending where tap:
@@ -176,9 +345,23 @@ struct TouchStateTracker {
         if mode == .pending || mode == .pointer, contacts.count >= 2 {
             if twoFingerScroll {
                 mode = .scroll
+                let pair = Array(contacts.prefix(2))
                 lastPositions = Dictionary(uniqueKeysWithValues:
-                    contacts.prefix(2).map { ($0.id, $0.screen) })
+                    pair.map { ($0.id, $0.screen) })
                 tapAnchor = nil  // tap is off the table once we go to two fingers
+                twoFingerKind = pinchZoom ? .undecided : .pan
+                lastPinchDistance = Self.distance(between: pair)
+                undecidedOriginCentroid = centroid(of: pair.map(\.screen))
+                undecidedOriginDistance = lastPinchDistance
+                recentVelocities.removeAll()
+                lastFrameTime = now
+                lastMotionTime = 0
+                // Defer Began until pan/pinch commits when pinch discrimination
+                // is on — leave lastScrollPhase .ended so a lift before commit
+                // does not emit a stray scroll Ended.
+                if pinchZoom {
+                    return .none
+                }
                 lastScrollPhase = .began
                 return .scrollDelta(dx: 0, dy: 0, phase: .began)
             } else if mode == .pointer {
@@ -208,6 +391,8 @@ struct TouchStateTracker {
             return .none
 
         case .scroll:
+            let dt = now - lastFrameTime
+            lastFrameTime = now
             // Centroid delta over the contacts present in both this frame and
             // the last.  Contacts with new ids (finger lifted and re-landed,
             // or upstream palm filtering churned the set) are seeded for the
@@ -217,19 +402,77 @@ struct TouchStateTracker {
             let tracked = current.filter { lastPositions[$0.id] != nil }
             let oldCentroid = centroid(of: tracked.compactMap { lastPositions[$0.id] })
             let newCentroid = centroid(of: tracked.map { $0.screen })
+            // Hold last distance when a finger lifts mid-gesture (1-contact
+            // frames). distance(between:) would be 0 and invent a huge scaleDelta.
+            let newDistance = current.count >= 2
+                ? Self.distance(between: current)
+                : lastPinchDistance
+            let oldDistance = lastPinchDistance
+            let scaleDelta = newDistance - oldDistance
             lastPositions = Dictionary(uniqueKeysWithValues:
                 current.map { ($0.id, $0.screen) })
+            lastPinchDistance = newDistance
             guard !tracked.isEmpty else { return .none }
             let dx = newCentroid.x - oldCentroid.x
             let dy = newCentroid.y - oldCentroid.y
-            // Skip dead frames: a stationary palm with two contacts down would
-            // otherwise post 100 no-op scroll events per second.
-            if dx == 0 && dy == 0 { return .none }
+
+            if pinchZoom {
+                if twoFingerKind == .undecided {
+                    // A 1-contact frame collapses the centroid onto that single
+                    // finger, roughly half the finger separation away from the
+                    // two-finger anchor — enough to clear the decide threshold
+                    // on its own and commit a phantom pan. Wait for two contacts.
+                    guard current.count >= 2 else { return .none }
+                    // Cumulative motion since two-finger sequence start — not
+                    // per-frame deltas, which stay tiny at high report rates.
+                    let totalTranslation = hypot(
+                        newCentroid.x - undecidedOriginCentroid.x,
+                        newCentroid.y - undecidedOriginCentroid.y)
+                    let totalScaleChange = abs(newDistance - undecidedOriginDistance)
+                    let decide = Self.twoFingerDecideDistance
+                    if totalScaleChange < decide, totalTranslation < decide {
+                        return .none
+                    }
+                    // Prefer pan unless pinch clearly dominates (ordinary pans
+                    // always have some finger-distance jitter).
+                    twoFingerKind =
+                        totalScaleChange > totalTranslation * Self.pinchDominanceRatio
+                        ? .pinch : .pan
+                    if twoFingerKind == .pan {
+                        lastScrollPhase = .began
+                        return .scrollDelta(dx: 0, dy: 0, phase: .began)
+                    }
+                    lastScrollPhase = .began
+                    return .zoomMagnify(magnification: 0, phase: .began)
+                }
+                if twoFingerKind == .pinch {
+                    guard scaleDelta != 0, oldDistance > 0 else { return .none }
+                    // Exact relative growth this frame — see the `zoomMagnify`
+                    // doc comment for why this is the correct (not approximate)
+                    // per-frame value for a multiplicative magnify stream.
+                    let magnification = scaleDelta / oldDistance
+                    lastScrollPhase = .changed
+                    return .zoomMagnify(magnification: magnification, phase: .changed)
+                }
+            }
+
             // Default (reverseScrollDirection=false): content follows finger.
             // Reversed: classic scroll-wheel semantics, content moves opposite.
             let sign = reverseScrollDirection ? -1.0 : 1.0
+            let outDx = sign * dx
+            let outDy = sign * dy
+            if dt > 0 {
+                recentVelocities.append((time: now, v: CGVector(dx: outDx / dt, dy: outDy / dt)))
+                recentVelocities.removeAll { now - $0.time > Self.peakVelocityWindow }
+            }
+            if dx != 0 || dy != 0 {
+                lastMotionTime = now
+            }
+            // Skip dead frames: a stationary palm with two contacts down would
+            // otherwise post 100 no-op scroll events per second.
+            if dx == 0 && dy == 0 { return .none }
             lastScrollPhase = .changed
-            return .scrollDelta(dx: sign * dx, dy: sign * dy, phase: .changed)
+            return .scrollDelta(dx: outDx, dy: outDy, phase: .changed)
 
         case .pointer:
             guard let first = contacts.first else { return .none }
@@ -256,6 +499,13 @@ struct TouchStateTracker {
         tapStart = 0
         tapMaxDelta = 0
         lastScrollPhase = .ended
+        twoFingerKind = .undecided
+        lastPinchDistance = 0
+        undecidedOriginCentroid = .zero
+        undecidedOriginDistance = 0
+        recentVelocities.removeAll()
+        lastFrameTime = 0
+        lastMotionTime = 0
     }
 
     private func centroid(of points: [CGPoint]) -> CGPoint {
@@ -264,5 +514,12 @@ struct TouchStateTracker {
         let sx = points.reduce(0) { $0 + $1.x } / n
         let sy = points.reduce(0) { $0 + $1.y } / n
         return CGPoint(x: sx, y: sy)
+    }
+
+    private static func distance(between contacts: [(id: Int, screen: CGPoint)]) -> Double {
+        guard contacts.count >= 2 else { return 0 }
+        let a = contacts[0].screen
+        let b = contacts[1].screen
+        return hypot(a.x - b.x, a.y - b.y)
     }
 }

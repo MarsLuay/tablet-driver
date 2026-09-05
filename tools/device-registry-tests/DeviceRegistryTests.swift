@@ -187,10 +187,79 @@ private func testRemoveAndRestoreTablet() {
     }
 }
 
+@MainActor
+private func testRecordHardwareSerial() {
+    let registry = DeviceRegistry.shared
+
+    let canonicalPID = 0x5202
+    let serial: UInt32 = 0x12345678
+
+    registry.recordHardwareSerial(serial, forDevice: canonicalPID)
+
+    let resolvedPID = registry.canonicalProductID(forHardwareSerial: serial)
+    expectEqual(resolvedPID, canonicalPID, "Hardware serial resolves to canonical PID")
+
+    let unknownPID = registry.canonicalProductID(forHardwareSerial: 0x87654321)
+    expectEqual(unknownPID, nil, "Unknown hardware serial resolves to nil")
+
+    registry.recordHardwareSerial(0, forDevice: 0x1234)
+    let ignoredPID = registry.canonicalProductID(forHardwareSerial: 0)
+    expectEqual(ignoredPID, nil, "Hardware serial 0 resolves to nil")
+}
+
+@MainActor
+private func testRecordTabletBackfills() {
+    let registry = DeviceRegistry.shared
+    registry.knownTablets.removeAll()
+
+    let key = DeviceInstanceKey(productID: 0x0357, instance: "testbackfill")
+
+    registry.recordTablet(instanceKey: key, usbSerial: nil, vendorID: 0x056A)
+    expectEqual(registry.knownTablets.count, 1, "Tablet recorded")
+    expectEqual(registry.knownTablets[0].usbSerial, nil, "Initial serial is nil")
+    expectEqual(registry.knownTablets[0].vendorID, 0x056A, "Initial vendor is 0x056A")
+
+    registry.recordTablet(instanceKey: key, usbSerial: "newserial", vendorID: 0x28BD)
+    expectEqual(registry.knownTablets.count, 1, "No duplicate tablet recorded")
+    expectEqual(registry.knownTablets[0].usbSerial, "newserial", "Serial was backfilled")
+    expectEqual(registry.knownTablets[0].vendorID, 0x28BD, "VendorID was updated")
+}
+
+@MainActor
+private func testRecordToolIntuosV1() {
+    let registry = DeviceRegistry.shared
+    registry.knownTablets.removeAll()
+    registry.knownTools.removeAll()
+
+    let key = DeviceInstanceKey(productID: 0x00B5, instance: "")
+    registry.recordTablet(instanceKey: key, usbSerial: nil)
+
+    let identity1 = ToolIdentity(serial: 0, toolCode: 0, isEraser: false, isMouse: false)
+    let toolID1 = registry.recordTool(identity: identity1, forDevice: key)
+
+    expectEqual(toolID1, "stylus", "Generic stylus gets ID stylus")
+    expectEqual(registry.knownTools.count, 1, "One generic stylus recorded")
+
+    let toolID2 = registry.recordTool(identity: identity1, forDevice: key)
+    expectEqual(toolID2, "stylus-1", "Second generic stylus gets counter suffix")
+    expectEqual(registry.knownTools.count, 2, "Two generic styluses recorded")
+
+    let realIdentity = ToolIdentity(serial: 1234, toolCode: 0x0822, isEraser: false, isMouse: false)
+    registry.recordTool(identity: realIdentity, forDevice: key)
+
+    expectEqual(registry.knownTools.count, 2, "Generic stylus removed, real tool added")
+    expectEqual(registry.knownTools.contains(where: { $0.id == "stylus" }), false, "stylus was removed")
+    expectEqual(registry.knownTools.contains(where: { $0.id == "stylus-1" }), true, "stylus-1 remains")
+    expectEqual(registry.knownTools.contains(where: { $0.id == "0x000004D2" }), true, "real tool added")
+}
+
 // MARK: - Main
 
 @MainActor
 private func runAll() {
+    testRecordHardwareSerial()
+    testRecordTabletBackfills()
+    testRecordToolIntuosV1()
     testRenameTablet()
     testRenameTool()
     testRenameToolEverywhere()

@@ -48,7 +48,7 @@ struct MarkdownBodyView: View {
             pendingLines = []
         }
 
-        for raw in source.components(separatedBy: "\n") {
+        for raw in source.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty {
                 flush()

@@ -61,14 +61,14 @@ final class HelpContent {
             lines = []
         }
 
-        for line in text.components(separatedBy: "\n") {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // A marker is a single bracketed token with no internal spaces.
             if trimmed.hasPrefix("["), trimmed.hasSuffix("]"), !trimmed.contains(" ") {
                 flush()
                 currentID = String(trimmed.dropFirst().dropLast())
             } else {
-                lines.append(line)
+                lines.append(String(line))
             }
         }
         flush()

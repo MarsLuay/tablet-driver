@@ -22,11 +22,16 @@ struct MarkdownBodyView: View {
     private var bodySize:    CGFloat { Self.bodyBase    + CGFloat(fontSizeStep) }
     private var headingSize: CGFloat { Self.headingBase + CGFloat(fontSizeStep) }
 
+    @State private var blocks: [Block] = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 blockView(block, index: index)
             }
+        }
+        .task(id: source) {
+            parseSource()
         }
     }
 
@@ -38,7 +43,7 @@ struct MarkdownBodyView: View {
         case bullet(text: String)
     }
 
-    private var blocks: [Block] {
+    private func parseSource() {
         var result: [Block] = []
         var pendingLines: [String] = []
 
@@ -48,7 +53,7 @@ struct MarkdownBodyView: View {
             pendingLines = []
         }
 
-        for raw in source.components(separatedBy: "\n") {
+        for raw in source.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty {
                 flush()
@@ -66,7 +71,7 @@ struct MarkdownBodyView: View {
             }
         }
         flush()
-        return result
+        blocks = result
     }
 
     // MARK: - Rendering

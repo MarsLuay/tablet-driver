@@ -43,6 +43,47 @@ func testCaptureInitReport() {
     expect(report2.valueHex == "0xFF", "Expected valueHex to be '0xFF'")
 }
 
+func testCaptureInitReportCodable() {
+    print("Testing CaptureInitReport Codable...")
+    let json = """
+    {
+        "reportID": 2,
+        "value": 2,
+        "succeeded": true
+    }
+    """.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    do {
+        let report = try decoder.decode(CaptureInitReport.self, from: json)
+        expect(report.reportID == 2, "Expected reportID to be 2")
+        expect(report.value == 2, "Expected value to be 2")
+        expect(report.succeeded == true, "Expected succeeded to be true")
+        expect(report.ioReturn == nil, "Expected ioReturn to be nil")
+    } catch {
+        expect(false, "Failed to decode CaptureInitReport: \(error)")
+    }
+
+    let json2 = """
+    {
+        "reportID": 15,
+        "value": 255,
+        "succeeded": false,
+        "ioReturn": "e00002bc"
+    }
+    """.data(using: .utf8)!
+
+    do {
+        let report = try decoder.decode(CaptureInitReport.self, from: json2)
+        expect(report.reportID == 15, "Expected reportID to be 15")
+        expect(report.value == 255, "Expected value to be 255")
+        expect(report.succeeded == false, "Expected succeeded to be false")
+        expect(report.ioReturn == "e00002bc", "Expected ioReturn to be 'e00002bc'")
+    } catch {
+        expect(false, "Failed to decode CaptureInitReport with ioReturn: \(error)")
+    }
+}
+
 func testCaptureDeviceInfo() {
     print("Testing CaptureDeviceInfo...")
     let device1 = CaptureDeviceInfo(vendorID: 0x056a, productID: 0x0357, name: "Wacom Intuos Pro M", locationID: nil)
@@ -57,6 +98,7 @@ func testCaptureDeviceInfo() {
 func runTests() {
     print("Running CaptureModelsTests...")
     testCaptureInitReport()
+    testCaptureInitReportCodable()
     testCaptureDeviceInfo()
 
     print("\n\(checks) checks run.")
